@@ -950,7 +950,7 @@ svg.ui-icon{width:16px;height:16px;flex:0 0 16px;fill:none;stroke:currentColor;s
 <div id="skillStrip" class="skill-strip" aria-live="polite" hidden></div>
 <div class="composer-box">
 <div class="attachment-row"><button class="footer-btn attach-btn" type="button" id="attachFilesBtn" aria-label="Attach files" title="Attach files"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><input id="attachmentInput" type="file" multiple accept="image/*,application/pdf,text/*,.md,.csv,.json,.js,.ts,.py,.html,.css,.xml,.yaml,.yml,.log" hidden></div>
-<textarea id="promptInput" class="composer-textarea" rows="1" enterkeyhint="send" placeholder="Ask ULTRON" aria-label="Message"></textarea>
+<textarea id="promptInput" class="composer-textarea" rows="1" enterkeyhint="enter" placeholder="Ask ULTRON" aria-label="Message"></textarea>
 <div id="slashCommandMenu" class="slash-command-menu" role="listbox" aria-label="Slash commands" hidden></div><div id="attachmentPreview" class="attachment-preview"></div>
 <div class="composer-actions"><span class="composer-status" id="engineStatus">Engine: Cloudflare Worker Ready</span><button class="web-search-toggle" id="webSearchToggle" type="button" aria-pressed="false" title="Use Google Search for this answer"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>Search</button><button class="send-btn" id="sendBtn" type="button" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div>
 </div><div class="home-indicator" aria-hidden="true"></div></div>
@@ -1583,16 +1583,18 @@ function initUltronSnake(root){
 const canvas=root.querySelector('.snake-canvas');if(!canvas)return;const ctx=canvas.getContext('2d');const size=15,cols=20,rows=12;let snake=[{x:8,y:6},{x:7,y:6},{x:6,y:6}],dir={x:1,y:0},next={x:1,y:0},food={x:13,y:6},score=0,alive=true,timer=null;
 const scoreEl=root.querySelector('.snake-score');function placeFood(){do{food={x:Math.floor(Math.random()*cols),y:Math.floor(Math.random()*rows)}}while(snake.some(p=>p.x===food.x&&p.y===food.y));}
 function draw(){ctx.clearRect(0,0,300,180);ctx.fillStyle='#171719';ctx.fillRect(0,0,300,180);ctx.strokeStyle='rgba(255,255,255,.045)';for(let x=0;x<=300;x+=size){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,180);ctx.stroke()}for(let y=0;y<=180;y+=size){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(300,y);ctx.stroke()}ctx.fillStyle='#c02b5b';ctx.beginPath();ctx.arc(food.x*size+7.5,food.y*size+7.5,5,0,Math.PI*2);ctx.fill();snake.forEach((p,i)=>{ctx.fillStyle=i?'#b9b9c0':'#f1f1f3';ctx.fillRect(p.x*size+1,p.y*size+1,size-2,size-2)});}
-function tick(){if(!alive)return;dir=next;const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};if(head.x<0||head.y<0||head.x>=cols||head.y>=rows||snake.some((p,i)=>i>0&&p.x===head.x&&p.y===head.y)){alive=false;ctx.fillStyle='rgba(0,0,0,.58)';ctx.fillRect(0,0,300,180);ctx.fillStyle='#fff';ctx.font='600 16px sans-serif';ctx.textAlign='center';ctx.fillText('Game over · Restart',150,94);return;}snake.unshift(head);if(head.x===food.x&&head.y===food.y){score+=10;scoreEl.textContent='Score: '+score;placeFood()}else snake.pop();draw();}
+function tick(){if(!alive)return;dir=next;const head={x:(snake[0].x+dir.x+cols)%cols,y:(snake[0].y+dir.y+rows)%rows};if(snake.some((p,i)=>i>0&&p.x===head.x&&p.y===head.y)){alive=false;ctx.fillStyle='rgba(0,0,0,.58)';ctx.fillRect(0,0,300,180);ctx.fillStyle='#fff';ctx.font='600 16px sans-serif';ctx.textAlign='center';ctx.fillText('Game over · Restart',150,94);return;}snake.unshift(head);if(head.x===food.x&&head.y===food.y){score+=10;scoreEl.textContent='Score: '+score;placeFood()}else snake.pop();draw();}
 function setDir(d){const map={up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right:{x:1,y:0}};const v=map[d];if(v&&!(v.x===-dir.x&&v.y===-dir.y))next=v;}
 function restart(){clearInterval(timer);snake=[{x:8,y:6},{x:7,y:6},{x:6,y:6}];dir=next={x:1,y:0};score=0;alive=true;scoreEl.textContent='Score: 0';placeFood();draw();timer=setInterval(tick,145);}
-root.querySelectorAll('[data-dir]').forEach(b=>b.addEventListener('click',()=>setDir(b.dataset.dir)));root.querySelector('.snake-restart').addEventListener('click',restart);const key=e=>{const map={ArrowUp:'up',w:'up',ArrowDown:'down',s:'down',ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right'};if(map[e.key]){e.preventDefault();setDir(map[e.key]);}};root.addEventListener('pointerdown',()=>root.focus());root.tabIndex=0;root.addEventListener('keydown',key);restart();
+root.querySelectorAll('[data-dir]').forEach(b=>b.addEventListener('click',()=>setDir(b.dataset.dir)));root.querySelector('.snake-restart').addEventListener('click',restart);const key=e=>{const map={ArrowUp:'up',w:'up',ArrowDown:'down',s:'down',ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right'};if(map[e.key]){e.preventDefault();setDir(map[e.key]);}};root.addEventListener('pointerdown',()=>root.focus());root.tabIndex=0;root.addEventListener('keydown',key);restart();root.__snakeCleanup=()=>clearInterval(timer);
 }
 function showFeedbackThanks(){let node=document.getElementById('feedbackThanksToast');if(!node){node=document.createElement('div');node.id='feedbackThanksToast';node.className='feedback-thanks-toast';node.setAttribute('role','status');node.setAttribute('aria-live','polite');document.body.appendChild(node);}node.textContent='Thanks for your feedback!';node.classList.remove('show');void node.offsetWidth;node.classList.add('show');clearTimeout(window.__ultronFeedbackToastTimer);window.__ultronFeedbackToastTimer=setTimeout(()=>node.classList.remove('show'),2200);}
 function renderChat() {
 const container = document.getElementById('chatContainer');
 const thread = state.threads.find(t => t.id === state.activeThreadId);
+const existingWaitRoom = container.querySelector('.ultron-wait-room');
 container.innerHTML = '';
+if (existingWaitRoom && (!activeRequest || existingWaitRoom.dataset.threadId !== thread?.id)) existingWaitRoom.__snakeCleanup?.();
 document.getElementById('workingChatName').textContent = thread ? thread.title : 'New Conversation';
 if (thread && thread.locked) { container.innerHTML='<div class="hero-empty"><h2 class="hero-greeting">Chat locked</h2><p class="hero-sub">Use the three-dot menu to unlock this chat.</p></div>'; return; }
 if (!thread || thread.messages.length === 0 || (thread.messages.length === 1 && thread.messages[0].role === 'assistant' && String(thread.messages[0].content || '').startsWith('Welcome to **ULTRON**.'))) {
@@ -1609,10 +1611,6 @@ const readout=document.getElementById('engineReadout');if(readout){const raw=(do
 return;
 }
 const lastMessage=thread.messages[thread.messages.length-1];
-if(activeRequest && (!lastMessage || lastMessage.role==='user' || lastMessage.isError)){
-const wait=document.createElement('section');wait.className='ultron-wait-room';wait.innerHTML='<div class="thinking-line"><span class="thinking-orb"></span><span>ULTRON is thinking</span><span class="thinking-dots"><i></i><i></i><i></i></span></div><div class="snake-card"><div class="snake-card-head"><span>WHILE YOU WAIT</span><strong>Snake</strong></div><canvas class="snake-canvas" width="300" height="180" aria-label="Snake game"></canvas><div class="snake-footer"><span class="snake-score">Score: 0</span><div class="snake-controls"><button type="button" data-dir="up">↑</button><button type="button" data-dir="left">←</button><button type="button" data-dir="down">↓</button><button type="button" data-dir="right">→</button></div><button type="button" class="snake-restart">Restart</button></div></div>';
-container.appendChild(wait);initUltronSnake(wait);
-}
 thread.messages.forEach((m, messageIndex) => {
 const row = document.createElement('div');
 row.className = 'msg-row';
@@ -1647,6 +1645,17 @@ row.appendChild(actions);
 }
 container.appendChild(row);
 });
+if (activeRequest && thread) {
+  let wait = existingWaitRoom && existingWaitRoom.dataset.threadId === thread.id ? existingWaitRoom : null;
+  if (!wait) {
+    wait = document.createElement('section');
+    wait.className = 'ultron-wait-room';
+    wait.dataset.threadId = thread.id;
+    wait.innerHTML = '<div class="thinking-line"><span class="thinking-orb"></span><span>ULTRON is thinking</span><span class="thinking-dots"><i></i><i></i><i></i></span></div><div class="snake-card"><div class="snake-card-head"><span>WHILE YOU WAIT</span><strong>Snake</strong></div><canvas class="snake-canvas" width="300" height="180" aria-label="Snake game"></canvas><div class="snake-footer"><span class="snake-score">Score: 0</span><div class="snake-controls"><button type="button" data-dir="up">↑</button><button type="button" data-dir="left">←</button><button type="button" data-dir="down">↓</button><button type="button" data-dir="right">→</button></div><button type="button" class="snake-restart">Restart</button></div></div>';
+    initUltronSnake(wait);
+  }
+  container.appendChild(wait);
+}
 container.querySelectorAll('.msg-assistant pre').forEach(pre => {
   const code = pre.querySelector('code'); if (!code) return;
   const toolbar = document.createElement('div'); toolbar.className = 'code-toolbar';
@@ -2331,7 +2340,7 @@ const promptEl = document.getElementById('promptInput');
 promptEl.addEventListener('keydown', e => {
   const isEnter = e.key === 'Enter' || e.keyCode === 13 || (e.keyCode === 229 && e.code === 'Enter');
   if (!isEnter || e.isComposing) return;
-  if (e.shiftKey) return; // Shift+Enter inserts a newline on desktop and mobile.
+  if (!e.ctrlKey && !e.metaKey) return; // Enter inserts a newline; Ctrl/⌘+Enter sends.
   e.preventDefault();
   handleSend();
 });
