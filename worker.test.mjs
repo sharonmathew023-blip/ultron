@@ -422,3 +422,13 @@ test("Groq provider fallback reports upstream errors without leaking credentials
   assert.equal(result.status, 400);
   assert.match(result.message, /invalid request/);
 });
+
+test("Groq provider fallback gives up at the timeout it is handed", async () => {
+  globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason));
+  });
+  const started = Date.now();
+  const result = await W.callGroqFallback({ messages: [{ role: "user", content: "Hi" }] }, { GROQ_API_KEY: "gsk-test" }, 40);
+  assert.match(result.message, /timed out/);
+  assert.ok(Date.now() - started < 2000);
+});

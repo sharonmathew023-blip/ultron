@@ -18,7 +18,7 @@
 
 // Skill Engine 2.0 shares its parser, scanner, and tool catalog with the browser.
 import "./skill-rules.js";
-import { applyMode } from "./modes.js";
+import { applyMode, forBackupProvider } from "./modes.js";
 
 const DEFAULT_MODEL = "gemini-3.5-flash"; // 3.8-flash answers 503 for days at a time
 const DEFAULT_FALLBACKS = "gemini-3.6-flash,gemini-flash-lite-latest";
@@ -42,7 +42,8 @@ const COOLDOWN_MAX_MS = 600_000;
 const COOLDOWN_KV_KEY = "model-cooldowns:v1";
 let modelListCache = { expiresAt: 0, data: null };
 const COOLDOWN_CACHE_MS = 3_000; // re-read the KV copy at most this often
-const TOTAL_BUDGET_MS = 45_000; // keep the answer inside the browser's 60s request timeout
+const TOTAL_BUDGET_MS = 45_000; // Gemini gets at most this long
+const CLIENT_DEADLINE_MS = 55_000; // the browser gives up after 60s with no data, so Gemini plus Groq must fit in this
 // Skills may only narrow the Worker's read-only tool access. Nothing in a
 // request can widen these grants, and write tools never exist here.
 const GRANTABLE_SKILL_TOOLS = new Set(["web.read", "github.read"]);
@@ -231,7 +232,7 @@ export default {
     if (!skillCheck.ok) return fail(400, skillCheck.message);
 
     // Mode prompts come from the Worker, never from the browser. Added after the skill check on purpose.
-    applyMode(input);
+    const activeMode = applyMode(input);
 
     const model = String(input.model || env.DEFAULT_MODEL || DEFAULT_MODEL).replace(/^models\//, "");
     if (!MODEL_RE.test(model)) return fail(400, "Invalid model name.");
@@ -254,6 +255,7 @@ export default {
     }
 
     const chain = buildModelChain(model, env);
+    const chatStarted = Date.now();
     const result = await callGemini(chain, JSON.stringify(geminiBody), env.GEMINI_API_KEY, makeHealth(env, ctx));
     if (result.error) {
       // Use the independent provider only for upstream availability failures.
@@ -264,7 +266,9 @@ export default {
           console.error("[ultron] Gemini is unavailable and GROQ_API_KEY is not configured.");
           return fail(503, "Gemini is unavailable and the Groq backup is not configured on this Worker. Add GROQ_API_KEY under the Production environment's Variables and Secrets, then redeploy.");
         }
-        const backup = await callGroqFallback(input, env);
+        // Groq cannot search, and it only gets what is left of the browser's patience.
+        const backupMs = Math.min(30_000, Math.max(5_000, CLIENT_DEADLINE_MS - (Date.now() - chatStarted)));
+        const backup = await callGroqFallback(forBackupProvider(input, activeMode), env, backupMs);
         if (backup.res) {
           return new Response(backup.res.body, {
             headers: {
@@ -935,7 +939,7 @@ async function callModel(model, body, apiKey, timeoutMs = HEADERS_TIMEOUT_MS) {
 // secret; GROQ_MODEL is optional and defaults to a currently supported text model.
 // This path deliberately skips image/PDF and tool requests rather than silently
 // dropping attachments or pretending provider-specific tools are portable.
-async function callGroqFallback(input, env) {
+async function callGroqFallback(input, env, timeoutMs = 30_000) {
   const messages = [];
   for (const message of (Array.isArray(input.messages) ? input.messages : [])) {
     if (!message || !["system", "user", "assistant"].includes(message.role)) continue;
@@ -956,7 +960,7 @@ async function callGroqFallback(input, env) {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.GROQ_API_KEY },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.ok && response.body) return { res: response, model };
     const raw = await response.text().catch(() => "");
