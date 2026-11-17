@@ -1324,6 +1324,7 @@ async function activateAccountWorkspace() {
   if (activeAccountEmail === email && activeStorageKey === storageKey && threadStorageReady) return;
   if (threadSaveTimer) clearTimeout(threadSaveTimer);
   if (threadStorageReady) flushThreadSave();
+  await threadWriteQueue;
   try { if (threadDatabase) threadDatabase.close(); } catch (_) {}
   threadDatabase = null;
   threadStorageReady = false;
@@ -2507,8 +2508,9 @@ renderAttachmentPreview();updateComposerAction();event.target.value='';
 });
 document.getElementById('connectGithubBtn').addEventListener('click', connectGithub);
 document.getElementById('checkConnectorsBtn').addEventListener('click', checkConnectorStatus);
-document.getElementById('googleSignOutBtn').addEventListener('click', () => {
+document.getElementById('googleSignOutBtn').addEventListener('click', async () => {
   if (threadStorageReady) flushThreadSave();
+  await threadWriteQueue;
   googleCredential = null;
   googleAccountEmail = '';
   googleAccountName = '';
