@@ -1029,7 +1029,7 @@ ULTRON sends requests to your Cloudflare Worker. Keep GEMINI_API_KEY in Cloudfla
 <div class="skill-editor-actions"><button class="footer-btn" type="button" id="skillEditorCancel">Cancel</button><button class="footer-btn" type="button" id="skillEditorSave">Add skill</button><button class="footer-btn" type="button" id="skillEditorClose">Close</button></div>
 </div>
 </div>
-<div class="field-group" style="border-top:1px solid var(--border-hairline); padding-top:14px;">
+<div class="field-group" id="appConnectorsSection" style="display:none; border-top:1px solid var(--border-hairline); padding-top:14px;">
 <label>App connectors</label>
 <p style="font-size:0.75rem; color:var(--text-muted);">Connect apps through Composio. Your Composio API key stays in Cloudflare.</p>
 <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -1053,6 +1053,7 @@ let googleCredential = null;
 const GOOGLE_SESSION_KEY = 'ultron_google_id_token_v1';
 let googleAccountEmail = '';
 let googleAccountName = '';
+let connectedAppsAvailable = false;
 let currentComposerMode = 'chat';
 let webSearchEnabled = false;
 function toggleWebSearch() {
@@ -1101,16 +1102,32 @@ function onGoogleCredential(response) {
   try { sessionStorage.setItem(GOOGLE_SESSION_KEY, googleCredential); } catch (_) {}
   googleAccountEmail = payload.email || 'Google account';
   googleAccountName = payload.given_name || (payload.name ? payload.name.split(' ')[0] : '') || '';
-  void activateAccountWorkspace();
+  void activateAccountWorkspace().then(refreshConnectedAppAccess);
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
   document.getElementById('authGate').style.display='none';
   document.getElementById('googleSignInError').textContent='';
 }
+async function refreshConnectedAppAccess() {
+  connectedAppsAvailable = false;
+  const section = document.getElementById('appConnectorsSection');
+  if (section) section.style.display = 'none';
+  const credential = getGoogleCredential();
+  if (!credential) return;
+  try {
+    const base = normalizeWorkerUrl(state.workerUrl).replace(/\/chat\/completions\/?$/, '');
+    const response = await fetch(base + '/account/access', { headers: { Authorization: 'Bearer ' + credential } });
+    const data = await response.json().catch(() => ({}));
+    connectedAppsAvailable = response.ok && data.connectedAppsAvailable === true;
+  } catch (_) {
+    connectedAppsAvailable = false;
+  }
+  if (section) section.style.display = connectedAppsAvailable ? '' : 'none';
+}
 function restoreGoogleSessionUI() {
   if (!getGoogleCredential()) return false;
-  void activateAccountWorkspace();
+  void activateAccountWorkspace().then(refreshConnectedAppAccess);
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
@@ -2243,7 +2260,7 @@ browserContext = '\n\nBROWSER PAGE CONTEXT (fetched by ULTRON):\nURL: ' + page.u
 browserContext = '\n\nBROWSER INSPECTION NOTE: ULTRON could not retrieve the URL: ' + browseError.message + '. Explain this specific limitation and continue with any information the user provided.';
 }
 }
-const toolSession = skillTools.includes('github.read')
+const toolSession = connectedAppsAvailable && skillTools.includes('github.read')
   ? (state.composioSessionId || (activation.activeSkills.length ? true : null))
   : null;
 statusEl.textContent = skillStatus + 'Connecting to Cloudflare Worker…';
@@ -2514,6 +2531,9 @@ document.getElementById('googleSignOutBtn').addEventListener('click', async () =
   googleCredential = null;
   googleAccountEmail = '';
   googleAccountName = '';
+  connectedAppsAvailable = false;
+  const connectorSection = document.getElementById('appConnectorsSection');
+  if (connectorSection) connectorSection.style.display = 'none';
   activeAccountEmail = '';
   activeStorageKey = null;
   activeThreadDbName = '';
