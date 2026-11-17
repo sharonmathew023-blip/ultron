@@ -47,14 +47,14 @@ test("signing out clears the visible workspace and closes its account database",
 
 
 test("non-owner accounts never turn ordinary skill-enabled chat into a connected-tool request", () => {
-  assert.match(html, /let connectedAppsAvailable = false/);
-  assert.match(html, /connectedAppsAvailable && skillTools\\.includes\\('github\\.read'\\)/);
-  assert.match(html, /\\/account\\/access/);
-  assert.match(html, /id="appConnectorsSection" style="display:none/);
+  assert.ok(html.includes("let connectedAppsAvailable = false"));
+  assert.ok(html.includes("const toolSession = connectedAppsAvailable && skillTools.includes('github.read')"));
+  assert.ok(html.includes("'/account/access'"));
+  assert.ok(html.includes('id="appConnectorsSection" style="display:none'));
 });
 
 test("connected-app controls are shown only when the Worker confirms owner access", () => {
-  assert.match(html, /connectedAppsAvailable = response\\.ok && data\\.connectedAppsAvailable === true/);
-  assert.match(html, /section\\.style\\.display = connectedAppsAvailable \\? '' : 'none'/);
-  assert.match(html, /connectedAppsAvailable = false;[\\s\\S]*?connectorSection\\.style\\.display = 'none'/);
+  assert.ok(html.includes("connectedAppsAvailable = response.ok && data.connectedAppsAvailable === true"));
+  assert.ok(html.includes("section.style.display = connectedAppsAvailable ? '' : 'none'"));
+  assert.ok(html.includes("connectorSection.style.display = 'none'"));
 });
