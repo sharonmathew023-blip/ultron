@@ -22,3 +22,10 @@ test("Enter inserts a newline and Ctrl/Command+Enter sends", () => {
   assert.match(html, /if \(!e\.ctrlKey && !e\.metaKey\) return;[\s\S]{0,100}e\.preventDefault\(\);[\s\S]{0,50}handleSend\(\);/);
   assert.match(html, /id="sendBtn"[^>]*aria-label="Send message"/);
 });
+
+
+test("the friendly creator message is used only for the 60-second idle timeout", () => {
+  assert.match(html, /error && error\.timeout\s*\?\s*`I don't know the answer bro\\njust google it 🫩\\n\\nmy creator will fix this problem\\n\( that's what he said\)`/);
+  assert.match(html, /:\s*`\*\*Couldn't get a reply\*\*/);
+  assert.match(html, /e\.timeout = true/);
+});
