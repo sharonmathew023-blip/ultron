@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, withSseHeartbeat, buildModelChain, readStreamTextLimited, verifyGoogleIdToken };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
@@ -470,4 +470,23 @@ test("requests that arrive together share one Google key fetch", async () => {
   const results = await Promise.all(Array.from({ length: 10 }, () => W.verifyGoogleIdToken(fakeToken("bogus"), "client-id")));
   assert.deepEqual(results, Array(10).fill(null));
   assert.equal(counter.calls, 2);
+});
+
+
+test("SSE heartbeat emits keep-alive comments while upstream is quiet", async () => {
+  let release;
+  const upstream = new ReadableStream({
+    start(controller) {
+      release = () => { controller.enqueue(enc.encode("data: done\\n\\n")); controller.close(); };
+    },
+  });
+  const wrapped = W.withSseHeartbeat(upstream, 10);
+  const reader = wrapped.getReader();
+  const first = await reader.read();
+  assert.equal(new TextDecoder().decode(first.value), ": keep-alive\\n\\n");
+  release();
+  const second = await reader.read();
+  assert.equal(new TextDecoder().decode(second.value), "data: done\\n\\n");
+  const end = await reader.read();
+  assert.equal(end.done, true);
 });
