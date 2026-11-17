@@ -1101,7 +1101,7 @@ function onGoogleCredential(response) {
   try { sessionStorage.setItem(GOOGLE_SESSION_KEY, googleCredential); } catch (_) {}
   googleAccountEmail = payload.email || 'Google account';
   googleAccountName = payload.given_name || (payload.name ? payload.name.split(' ')[0] : '') || '';
-  void activateAccountWorkspace();
+  void activateAccountWorkspace().then(refreshConnectedAppAccess);
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
@@ -1126,7 +1126,7 @@ async function refreshConnectedAppAccess() {
 }
 function restoreGoogleSessionUI() {
   if (!getGoogleCredential()) return false;
-  void activateAccountWorkspace();
+  void activateAccountWorkspace().then(refreshConnectedAppAccess);
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
