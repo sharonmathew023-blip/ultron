@@ -2266,7 +2266,9 @@ stopped = true;
 statusEl.textContent = 'Engine: Stopped';
 } else {
 isError = true;
-replyText = `**Couldn't get a reply**\n\n${error.message || 'Something went wrong while contacting the selected provider.'}\n\nSend your message again to retry, or open Settings to check the Worker URL.`;
+replyText = error && error.timeout
+? `I don't know the answer bro\njust google it 🫩\n\nmy creator will fix this problem\n( that's what he said)`
+: `**Couldn't get a reply**\n\n${error.message || 'Something went wrong while contacting the selected provider.'}\n\nSend your message again to retry, or open Settings to check the Worker URL.`;
 statusEl.textContent = 'Engine: Connection failed';
 }
 } finally {
