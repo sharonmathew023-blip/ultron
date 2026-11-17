@@ -28,3 +28,7 @@ jobs:
         run: node --test worker.test.mjs
       - name: Run composer regression tests
         run: node --test tests/composer-regression.test.mjs
+      - name: Run mode tests
+        run: node --test modes.test.mjs
+      - name: Run browser timeout and retry tests
+        run: node --test tests/client-timeout.test.mjs

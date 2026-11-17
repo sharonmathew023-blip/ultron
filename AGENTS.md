@@ -4,7 +4,6 @@ Read this file before editing code. These rules apply to every change in this re
 
 ## Project map
 - `index.html`: public browser UI and inline application logic.
-- `app.js`: browser application logic for the standalone workspace.
 - `worker.js`: Cloudflare Worker API, authentication, provider calls, and privileged integrations.
 - `wrangler.toml`: non-secret Worker configuration and bindings.
 - `skill-engine.js`, `skill-rules.js`, `builtin-skills.js`: skill UI, parsing/security rules, and built-in skills.

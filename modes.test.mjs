@@ -1,7 +1,7 @@
 // Run with:  node --test modes.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODES, applyMode } from "./modes.js";
+import { MODES, applyMode, forBackupProvider } from "./modes.js";
 
 const base = () => ({ messages: [{ role: "user", content: "hi" }] });
 
@@ -38,4 +38,30 @@ test("agent, studio and developer add a prompt but never turn on search", () => 
     assert.equal(input.messages[0].role, "system");
     assert.equal(input.web_search, undefined);
   }
+});
+
+test("backup provider: research swaps its search prompt for a no-search one", () => {
+  const input = { ...base(), mode: "research" };
+  applyMode(input);
+  const copy = forBackupProvider(input, "research");
+  assert.equal(copy.messages[0].content, MODES.research.fallbackSystem);
+  assert.doesNotMatch(copy.messages[0].content, /Use Google Search/);
+  assert.match(copy.messages[0].content, /never invent sources/);
+  assert.equal(copy.messages[1].content, "hi");
+  assert.equal(input.messages[0].content, MODES.research.system, "the original request is not changed");
+});
+
+test("backup provider: the plain search toggle gets a no-search note", () => {
+  const input = { ...base(), web_search: true };
+  const copy = forBackupProvider(input, null);
+  assert.equal(copy.messages.length, 2);
+  assert.equal(copy.messages[0].role, "system");
+  assert.match(copy.messages[0].content, /not available/);
+  assert.equal(input.messages.length, 1);
+});
+
+test("backup provider: requests without search pass through untouched", () => {
+  const input = { ...base(), mode: "studio" };
+  applyMode(input);
+  assert.equal(forBackupProvider(input, "studio"), input);
 });

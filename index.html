@@ -1823,7 +1823,7 @@ function isSetupProblem(message) {
   const text = String(message || '');
   return /GEMINI_API_KEY/.test(text) && /API key/i.test(text);
 }
-async function readWorkerReply(response, onChunk) {
+async function readWorkerReply(response, onChunk, onActivity) {
   lastReplyModel = '';
   if (!response.ok) {
     const body = await response.text();
@@ -1875,6 +1875,7 @@ async function readWorkerReply(response, onChunk) {
   try {
     while (!sawDone) {
       const part = await reader.read();
+      if (onActivity) onActivity();
       if (part.done) break;
       buffer += decoder.decode(part.value, { stream: true });
       const lines = buffer.split(/\r?\n/);
@@ -1932,7 +1933,7 @@ return err;
 }
 function describeFetchFailure(error, url, timedOut) {
 if (error && error.name === 'AbortError') {
-const e = new Error(timedOut ? 'The server did not answer within 60 seconds.' : 'Stopped.');
+const e = new Error(timedOut ? 'The server stopped responding for 60 seconds.' : 'Stopped.');
 if (timedOut) { e.retryable = true; e.timeout = true; } else { e.stopped = true; }
 return e;
 }
@@ -1992,14 +1993,17 @@ let timedOut = false;
 const onUser = () => controller.abort();
 if (userSignal.aborted) { const e = new Error('Stopped.'); e.stopped = true; throw e; }
 userSignal.addEventListener('abort', onUser, { once: true });
-const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+// Idle timeout: the clock restarts every time the Worker sends bytes, so a long answer can finish.
+let timer = null;
+const arm = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs); };
+arm();
 try {
 let res;
 try {
 res = await fetch(url, { method: 'POST', headers: workerHeaders(), body: JSON.stringify(payload), signal: controller.signal });
 } catch (error) { throw describeFetchFailure(error, url, timedOut); }
 try {
-return await readWorkerReply(res, onChunk); // stream chunks while the same timer and Stop button cover the body
+return await readWorkerReply(res, onChunk, arm); // every chunk re-arms the idle timer; Stop still aborts at any time
 } catch (error) { throw describeFetchFailure(error, url, timedOut); }
 } finally {
 clearTimeout(timer);
@@ -2026,7 +2030,9 @@ signal.addEventListener('abort', done, { once: true });
 });
 }
 async function requestWorkerReply(endpoint, messages, signal, onStatus, onChunk, toolSessionId, skillManifest) {
-const models = modelChain();
+// The Worker already runs the whole fallback chain (retries, backoff, cooldowns, Groq).
+// Asking it again for each backup model from here multiplied every request by 3.
+const models = [modelChain()[0]];
 let lastError = null;
 let emittedAnyText = false;
 const emitChunk = text => { emittedAnyText = true; if (onChunk) onChunk(text); };
@@ -2047,14 +2053,10 @@ onStatus(`Connection dropped — reconnecting (${attempt + 1}/${NETWORK_RETRIES}
 await pause(1500 * (attempt + 1), signal);
 continue;
 }
-// Not something another model can fix: report it straight away.
-if (!error.retryable && !error.modelGone) throw error;
-break; // this model is out, try the next one
+// The Worker already tried every backup model, so there is nothing left to switch to.
+throw error;
 }
 }
-}
-if (lastError && (lastError.retryable || lastError.modelGone)) {
-lastError.message = `Google's Gemini service is not answering right now (tried ${models.join(', ')}). Last error: ${lastError.message}`;
 }
 throw lastError;
 }

@@ -22,8 +22,9 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
+export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
 const tmpFile = path.join(here, ".worker.under-test.mjs");
 fs.writeFileSync(tmpFile, source);
@@ -421,4 +422,52 @@ test("Groq provider fallback reports upstream errors without leaking credentials
   const result = await W.callGroqFallback({ messages: [{ role: "user", content: "Hi" }] }, { GROQ_API_KEY: "gsk-test" });
   assert.equal(result.status, 400);
   assert.match(result.message, /invalid request/);
+});
+
+test("Groq provider fallback gives up at the timeout it is handed", async () => {
+  globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason));
+  });
+  // AbortSignal.timeout timers are unref'd, so hold the event loop open until the abort fires.
+  const keepAlive = setTimeout(() => {}, 5000);
+  const started = Date.now();
+  try {
+    const result = await W.callGroqFallback({ messages: [{ role: "user", content: "Hi" }] }, { GROQ_API_KEY: "gsk-test" }, 40);
+    assert.match(result.message, /timed out/);
+    assert.ok(Date.now() - started < 2000);
+  } finally {
+    clearTimeout(keepAlive);
+  }
+});
+
+function mockGoogleKeys(counter) {
+  globalThis.fetch = async (url) => {
+    counter.calls++;
+    if (String(url).includes("openid-configuration")) {
+      return new Response(JSON.stringify({ jwks_uri: "https://www.googleapis.com/oauth2/v3/certs" }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ keys: [{ kid: "real", alg: "RS256", use: "sig", kty: "RSA", n: "AQAB", e: "AQAB" }] }),
+      { status: 200, headers: { "Cache-Control": "public, max-age=3600" } });
+  };
+}
+const fakeToken = (kid) => {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${b64({ alg: "RS256", kid })}.${b64({ sub: "1" })}.AAAA`;
+};
+
+test("made-up key ids cannot force a Google key refresh on every request", async () => {
+  W.__resetJwks();
+  const counter = { calls: 0 };
+  mockGoogleKeys(counter);
+  for (let i = 0; i < 25; i++) assert.equal(await W.verifyGoogleIdToken(fakeToken("bogus-" + i), "client-id"), null);
+  assert.equal(counter.calls, 2, "one discovery fetch and one key fetch, however many bad tokens arrive");
+});
+
+test("requests that arrive together share one Google key fetch", async () => {
+  W.__resetJwks();
+  const counter = { calls: 0 };
+  mockGoogleKeys(counter);
+  const results = await Promise.all(Array.from({ length: 10 }, () => W.verifyGoogleIdToken(fakeToken("bogus"), "client-id")));
+  assert.deepEqual(results, Array(10).fill(null));
+  assert.equal(counter.calls, 2);
 });
