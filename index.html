@@ -2203,10 +2203,26 @@ const toolSession = skillTools.includes('github.read')
   ? (state.composioSessionId || (activation.activeSkills.length ? true : null))
   : null;
 statusEl.textContent = skillStatus + 'Connecting to Cloudflare Worker…';
+// Keep the full transcript in the UI, but send only complete prior turns plus
+// the current question. Consecutive unanswered user messages are orphaned turns.
+const requestHistory = [];
+let pendingUserMessage = null;
+for (const message of thread.messages) {
+  if (message.isError) continue;
+  if (message.role === 'user') {
+    pendingUserMessage = message;
+  } else if (message.role === 'assistant') {
+    if (pendingUserMessage) requestHistory.push(pendingUserMessage);
+    requestHistory.push(message);
+    pendingUserMessage = null;
+  }
+}
+if (pendingUserMessage) requestHistory.push(pendingUserMessage);
+const currentUserMessage = thread.messages[thread.messages.length - 1];
 replyText = await requestWorkerReply(endpoint, [
 { role: 'system', content: [state.systemPrompt, window.SkillEngineUI.buildSystemMessage(activation)].filter(Boolean).join('\n\n') },
-...thread.messages.filter(m => !m.isError).map((m, index, arr) => {
-const isLatestUser = m === arr[arr.length - 1] && m.role === 'user';
+...requestHistory.map((m) => {
+const isLatestUser = m === currentUserMessage && m.role === 'user';
 if (!isLatestUser) return { role: m.role, content: m.content };
 const textContent = m.content + (attachments.some(f => f.kind === 'text') ? '\n\n' + attachments.filter(f => f.kind === 'text').map(f => 'FILE: ' + f.name + '\n' + f.content).join('\n\n') : '') + browserContext;
 const binaryParts = attachments.filter(f => f.kind === 'binary').map(f => ({ type: 'image_url', image_url: { url: f.dataUrl } }));
