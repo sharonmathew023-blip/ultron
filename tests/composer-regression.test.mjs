@@ -44,3 +44,17 @@ test("chat history and workspace metadata are isolated by Google account", () =>
 test("signing out clears the visible workspace and closes its account database", () => {
   assert.match(html, /activeAccountEmail = '';[\s\S]*?threadDatabase\.close\(\)[\s\S]*?state = structuredClone\(defaultState\)/);
 });
+
+
+test("non-owner accounts never turn ordinary skill-enabled chat into a connected-tool request", () => {
+  assert.match(html, /let connectedAppsAvailable = false/);
+  assert.match(html, /connectedAppsAvailable && skillTools\\.includes\\('github\\.read'\\)/);
+  assert.match(html, /\\/account\\/access/);
+  assert.match(html, /id="appConnectorsSection" style="display:none/);
+});
+
+test("connected-app controls are shown only when the Worker confirms owner access", () => {
+  assert.match(html, /connectedAppsAvailable = response\\.ok && data\\.connectedAppsAvailable === true/);
+  assert.match(html, /section\\.style\\.display = connectedAppsAvailable \\? '' : 'none'/);
+  assert.match(html, /connectedAppsAvailable = false;[\\s\\S]*?connectorSection\\.style\\.display = 'none'/);
+});
