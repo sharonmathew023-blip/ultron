@@ -186,7 +186,8 @@ export default {
     if (!googleToken) return fail(401, "Sign in with Google to use ULTRON.");
     let googleIdentity;
     try {
-      googleIdentity = await verifyGoogleIdToken(googleToken, env.GOOGLE_CLIENT_ID);
+      googleIdentity = await verifyFirebaseIdToken(googleToken, String(env.FIREBASE_PROJECT_ID || "ultron-aab27").trim());
+      if (!googleIdentity) googleIdentity = await verifyGoogleIdToken(googleToken, env.GOOGLE_CLIENT_ID);
     } catch {
       return fail(503, "Google sign-in verification is temporarily unavailable. Please try again.");
     }
@@ -1124,8 +1125,12 @@ async function authenticateGoogleRequest(request, env) {
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!token) return { status: 401, message: "Sign in with Google to continue." };
   try {
-    const identity = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
-    return identity ? { identity } : { status: 401, message: "Your Google sign-in is invalid or expired. Sign in again." };
+    const projectId = String(env.FIREBASE_PROJECT_ID || "ultron-aab27").trim();
+    const firebaseIdentity = await verifyFirebaseIdToken(token, projectId);
+    if (firebaseIdentity) return { identity: firebaseIdentity };
+    // Temporary compatibility for already-open sessions during the auth migration.
+    const legacyIdentity = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
+    return legacyIdentity ? { identity: legacyIdentity } : { status: 401, message: "Your Google sign-in is invalid or expired. Sign in again." };
   } catch {
     return { status: 503, message: "Google sign-in verification is temporarily unavailable. Try again." };
   }
@@ -1162,6 +1167,42 @@ async function getGoogleJwks(forceRefresh = false) {
   googleJwksCache = data.keys;
   googleJwksExpiresAt = Date.now() + Math.max(60, Math.min(maxAge, 86400)) * 1000;
   return googleJwksCache;
+}
+
+let firebaseJwksCache = null;
+let firebaseJwksExpiresAt = 0;
+async function getFirebaseJwks(forceRefresh = false) {
+  if (!forceRefresh && firebaseJwksCache && Date.now() < firebaseJwksExpiresAt) return firebaseJwksCache;
+  const response = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com", { signal: AbortSignal.timeout(7000) });
+  if (!response.ok) throw new Error("Firebase signing keys unavailable");
+  const data = await response.json();
+  if (!Array.isArray(data.keys) || !data.keys.length) throw new Error("Firebase signing keys missing");
+  const cacheControl = response.headers.get("Cache-Control") || "";
+  const maxAge = Number((cacheControl.match(/max-age=(\d+)/i) || [])[1] || 3600);
+  firebaseJwksCache = data.keys;
+  firebaseJwksExpiresAt = Date.now() + Math.max(60, Math.min(maxAge, 86400)) * 1000;
+  return firebaseJwksCache;
+}
+async function verifyFirebaseIdToken(token, projectId) {
+  if (!projectId || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  let header, claims;
+  try {
+    header = JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[0])));
+    claims = JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[1])));
+  } catch { return null; }
+  if (header.alg !== "RS256" || !header.kid) return null;
+  let keys = await getFirebaseJwks();
+  let jwk = keys.find(key => key.kid === header.kid && key.alg === "RS256" && key.use === "sig");
+  if (!jwk) { keys = await getFirebaseJwks(true); jwk = keys.find(key => key.kid === header.kid && key.alg === "RS256" && key.use === "sig"); }
+  if (!jwk) return null;
+  const publicKey = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+  const signatureValid = await crypto.subtle.verify({ name: "RSASSA-PKCS1-v1_5" }, publicKey, decodeBase64Url(parts[2]), new TextEncoder().encode(parts[0] + "." + parts[1]));
+  const now = Math.floor(Date.now() / 1000);
+  const emailVerified = claims.email_verified === true || String(claims.email_verified).toLowerCase() === "true";
+  if (!signatureValid || claims.aud !== projectId || claims.iss !== `https://securetoken.google.com/${projectId}` || !claims.sub || claims.sub.length > 128 || !emailVerified || typeof claims.email !== "string" || claims.firebase?.sign_in_provider !== "google.com" || !Number.isFinite(Number(claims.exp)) || Number(claims.exp) <= now || !Number.isFinite(Number(claims.iat)) || Number(claims.iat) > now + 60 || !Number.isFinite(Number(claims.auth_time)) || Number(claims.auth_time) > now + 60) return null;
+  return claims;
 }
 
 async function verifyGoogleIdToken(token, clientId) {

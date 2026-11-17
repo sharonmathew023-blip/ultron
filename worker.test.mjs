@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyFirebaseIdToken };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 `;
 const tmpFile = path.join(here, ".worker.under-test.mjs");
@@ -421,4 +421,11 @@ test("Groq provider fallback reports upstream errors without leaking credentials
   const result = await W.callGroqFallback({ messages: [{ role: "user", content: "Hi" }] }, { GROQ_API_KEY: "gsk-test" });
   assert.equal(result.status, 400);
   assert.match(result.message, /invalid request/);
+});
+
+test("Firebase ID token verifier rejects malformed and empty tokens", async () => {
+  assert.equal(await W.verifyFirebaseIdToken("", "ultron-aab27"), null);
+  assert.equal(await W.verifyFirebaseIdToken("not-a-jwt", "ultron-aab27"), null);
+  assert.equal(await W.verifyFirebaseIdToken("a.b.c", "ultron-aab27"), null);
+  assert.equal(await W.verifyFirebaseIdToken("a.b.c", ""), null);
 });

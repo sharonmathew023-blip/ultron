@@ -740,7 +740,8 @@ body{letter-spacing:0}
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-<script id="google-identity-services" src="https://accounts.google.com/gsi/client" async defer onerror="window.__ultronGoogleScriptFailed=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <style>
 [data-theme="dark"] .drawer-header .brand-title,[data-theme="dark"] .drawer-header .brand-mark,[data-theme="dark"] .drawer-header .brand-wordmark{color:#fff!important}[data-theme="light"] .drawer-header .brand-title,[data-theme="light"] .drawer-header .brand-mark,[data-theme="light"] .drawer-header .brand-wordmark{color:#000!important}
 /* ULTRON brand system */
@@ -1049,11 +1050,12 @@ ULTRON sends requests to your Cloudflare Worker. Keep GEMINI_API_KEY in Cloudfla
 <script src="./builtin-skills.js?v=skill-engine-2"></script>
 <script src="./skill-engine.js?v=skill-engine-2"></script>
 <script>
-const GOOGLE_CLIENT_ID = '299929778437-b5t5kpo1b83nmlp44aj4oerhbkl876gj.apps.googleusercontent.com';
+const FIREBASE_CONFIG = {apiKey:'AIzaSyAaesSAzSmquxI0TqSA2Lvu2r8JOcnQFs4',authDomain:'ultron-aab27.firebaseapp.com',projectId:'ultron-aab27',storageBucket:'ultron-aab27.firebasestorage.app',messagingSenderId:'176300907960',appId:'1:176300907960:web:7d412e2ce456df8a6e434d'};
 let googleCredential = null;
-const GOOGLE_SESSION_KEY = 'ultron_google_id_token_v1';
 let googleAccountEmail = '';
 let googleAccountName = '';
+let firebaseAuth = null;
+let firebaseAuthReady = false;
 let currentComposerMode = 'chat';
 let webSearchEnabled = false;
 function toggleWebSearch() {
@@ -1065,85 +1067,40 @@ function toggleWebSearch() {
   button.title = webSearchEnabled ? 'Google Search is enabled for the next answer' : 'Use Google Search for this answer';
 }
 document.getElementById('webSearchToggle').addEventListener('click', toggleWebSearch);
-function decodeGooglePayload(token) {
-  try {
-    const part = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
-    return JSON.parse(atob(part.padEnd(Math.ceil(part.length/4)*4,'=')));
-  } catch (error) { return null; }
-}
-function getGoogleCredential() {
-  if (!googleCredential) {
-    try { googleCredential = sessionStorage.getItem(GOOGLE_SESSION_KEY) || null; } catch (_) {}
-  }
-  if (!googleCredential) return null;
-  const payload = decodeGooglePayload(googleCredential);
-  if (!payload || !payload.exp || payload.exp <= Math.floor(Date.now()/1000)) {
-    googleCredential = null;
-    googleAccountEmail = '';
-    googleAccountName = '';
-    try { sessionStorage.removeItem(GOOGLE_SESSION_KEY); } catch (_) {}
-    return null;
-  }
-  googleAccountEmail = payload.email || 'Google account';
-  googleAccountName = payload.given_name || (payload.name ? payload.name.split(' ')[0] : '') || '';
-  return googleCredential;
-}
+function getGoogleCredential() { return googleCredential; }
 function showGoogleLogin(message='') {
   document.getElementById('authGate').style.display='flex';
   document.getElementById('googleSignInError').textContent=message;
 }
-function onGoogleCredential(response) {
-  const payload = decodeGooglePayload(response.credential);
-  if (!payload || payload.aud !== GOOGLE_CLIENT_ID || !payload.exp || payload.exp <= Math.floor(Date.now()/1000)) {
-    showGoogleLogin('Google could not verify this sign-in. Please try again.');
-    return;
-  }
-  googleCredential = response.credential;
-  try { sessionStorage.setItem(GOOGLE_SESSION_KEY, googleCredential); } catch (_) {}
-  googleAccountEmail = payload.email || 'Google account';
-  googleAccountName = payload.given_name || (payload.name ? payload.name.split(' ')[0] : '') || '';
-  document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
+function updateSignedInUI(user) {
+  googleAccountEmail = user?.email || '';
+  googleAccountName = user?.displayName?.split(' ')[0] || '';
+  document.getElementById('googleAccountLabel').textContent = googleAccountEmail || 'Not signed in';
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
-  document.getElementById('authGate').style.display='none';
-  document.getElementById('googleSignInError').textContent='';
+  document.getElementById('authGate').style.display=user?'none':'flex';
 }
-function restoreGoogleSessionUI() {
-  if (!getGoogleCredential()) return false;
-  document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
-  const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
-  const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
-  document.getElementById('authGate').style.display='none';
-  return true;
-}
-function initializeGoogleSignIn(attempt=0) {
-  const slot = document.getElementById('googleSignInButton');
-  if (!slot) return;
-  if (window.google?.accounts?.id) {
-    try {
-      window.google.accounts.id.initialize({client_id:GOOGLE_CLIENT_ID,callback:onGoogleCredential,auto_select:true,ux_mode:'popup'});
-      slot.replaceChildren();
-      const availableWidth = Math.floor(slot.getBoundingClientRect().width || 260);
-      const buttonWidth = Math.max(200, Math.min(320, availableWidth));
-      window.google.accounts.id.renderButton(slot,{type:'standard',theme:'filled_black',size:'large',shape:'pill',text:'continue_with',width:buttonWidth,logo_alignment:'left'});
-      if (getGoogleCredential()) {
-        document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
-        const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
-        const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
-        document.getElementById('authGate').style.display='none';
-      } else showGoogleLogin();
-    } catch (_) {
-      showGoogleLogin('Google sign-in could not initialize. Refresh the page and try again.');
-    }
-    return;
-  }
-  if (attempt < 40) {
-    setTimeout(()=>initializeGoogleSignIn(attempt+1),250);
-  } else if (window.__ultronGoogleScriptFailed) {
-    showGoogleLogin('Google sign-in was blocked or could not load. Check your connection and allow accounts.google.com, then refresh.');
-  } else {
-    showGoogleLogin('Google sign-in did not initialize. Check your connection and refresh.');
-  }
+async function initializeFirebaseAuth() {
+  const slot=document.getElementById('googleSignInButton');
+  const button=document.createElement('button');
+  button.type='button';button.className='firebase-google-button';button.textContent='Continue with Google';
+  button.addEventListener('click',async()=>{
+    if(!firebaseAuth)return;
+    try{document.getElementById('googleSignInError').textContent='';await firebaseAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());}
+    catch(error){showGoogleLogin(error.code==='auth/popup-closed-by-user'?'Sign-in was cancelled.':('Google sign-in failed: '+(error.message||'Please try again.')));}
+  });
+  slot.replaceChildren(button);
+  try {
+    if(!window.firebase?.auth)throw new Error('Firebase Authentication SDK could not load. Refresh the page.');
+    if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);
+    firebaseAuth=firebase.auth();
+    await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    firebaseAuth.onIdTokenChanged(async user=>{
+      try{googleCredential=user?await user.getIdToken():null;}catch(_){googleCredential=null;}
+      firebaseAuthReady=true;
+      updateSignedInUI(user);
+    });
+  } catch(error) { showGoogleLogin(error.message||'Firebase sign-in could not initialize.'); }
 }
 const STORAGE_KEY = 'openclaude_worker_v3';
 try { localStorage.removeItem('openclaude_direct_v2'); } catch (_) {}
@@ -2437,15 +2394,7 @@ renderAttachmentPreview();updateComposerAction();event.target.value='';
 });
 document.getElementById('connectGithubBtn').addEventListener('click', connectGithub);
 document.getElementById('checkConnectorsBtn').addEventListener('click', checkConnectorStatus);
-document.getElementById('googleSignOutBtn').addEventListener('click', () => {
-  googleCredential = null;
-  googleAccountEmail = '';
-  googleAccountName = '';
-  try { sessionStorage.removeItem(GOOGLE_SESSION_KEY); } catch (_) {}
-  if (window.google?.accounts?.id) window.google.accounts.id.disableAutoSelect();
-  document.getElementById('googleAccountLabel').textContent = 'Not signed in';
-  showGoogleLogin('You have signed out.');
-});
+document.getElementById('googleSignOutBtn').addEventListener('click', async () => { try { if(firebaseAuth) await firebaseAuth.signOut(); } catch(error) { toast('Could not sign out: '+error.message); } });
 function closeSettingsModal(){document.getElementById('settingsModal').classList.remove('open');}
 document.getElementById('settingsCloseBtn').addEventListener('click',closeSettingsModal);
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
@@ -2467,8 +2416,8 @@ a.click();
 document.getElementById('providerBadge').textContent = 'Worker';
 document.getElementById('engineStatus').textContent = 'Engine: Cloudflare Worker Ready';
 applyTheme();
-if (!restoreGoogleSessionUI()) showGoogleLogin();
-initializeGoogleSignIn();
+showGoogleLogin();
+void initializeFirebaseAuth();
 renderSidebar();
 renderChat();
 window.addEventListener('pagehide', flushThreadSave);
