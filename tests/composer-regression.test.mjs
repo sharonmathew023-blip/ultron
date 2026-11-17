@@ -29,3 +29,18 @@ test("the friendly creator message is used only for the 60-second idle timeout",
   assert.match(html, /:\s*`\*\*Couldn't get a reply\*\*/);
   assert.match(html, /e\.timeout = true/);
 });
+
+
+test("chat history and workspace metadata are isolated by Google account", () => {
+  assert.match(html, /function getAccountStorageKey\(\)[\s\S]*?encodeURIComponent\(googleAccountEmail\.trim\(\)\.toLowerCase\(\)\)/);
+  assert.match(html, /function getThreadDatabaseName\(\)[\s\S]*?openclaude-thread-store:/);
+  assert.match(html, /indexedDB\.open\(activeThreadDbName \|\| THREAD_DB_NAME, THREAD_DB_VERSION\)/);
+  assert.match(html, /localStorage\.getItem\(activeStorageKey \|\| STORAGE_KEY\)/);
+  assert.match(html, /void activateAccountWorkspace\(\)/);
+  assert.match(html, /if \(!activeStorageKey\) return/);
+  assert.match(html, /old unscoped workspace is deliberately not auto-imported/);
+});
+
+test("signing out clears the visible workspace and closes its account database", () => {
+  assert.match(html, /activeAccountEmail = '';[\s\S]*?threadDatabase\.close\(\)[\s\S]*?state = structuredClone\(defaultState\)/);
+});
