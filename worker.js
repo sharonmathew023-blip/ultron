@@ -116,6 +116,13 @@ export default {
       }
     }
 
+    // Return the signed-in account connector entitlement without exposing the configured owner email.
+    if (request.method === "GET" && path === "/account/access") {
+      const auth = await authenticateGoogleRequest(request, env);
+      if (!auth.identity) return fail(auth.status, auth.message);
+      return reply({ connectedAppsAvailable: isUltronOwner(auth.identity, env) });
+    }
+
     // Composio Connect consumer MCP. The ck_* key stays server-side and is
     // sent only to connect.composio.dev using x-consumer-api-key.
     if (path.startsWith("/composio/")) {
