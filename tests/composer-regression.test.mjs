@@ -56,5 +56,5 @@ test("non-owner accounts never turn ordinary skill-enabled chat into a connected
 test("connected-app controls are shown only when the Worker confirms owner access", () => {
   assert.ok(html.includes("connectedAppsAvailable = response.ok && data.connectedAppsAvailable === true"));
   assert.ok(html.includes("section.style.display = connectedAppsAvailable ? '' : 'none'"));
-  assert.ok(html.includes("connectorSection.style.display = 'none'"));
+  assert.ok(html.includes("if (section) section.style.display = 'none'"));
 });
