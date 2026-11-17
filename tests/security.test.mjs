@@ -2,7 +2,7 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
-const frontendPaths = ["../index.html", "../app.js", "../skill-engine.js", "../skill-rules.js", "../builtin-skills.js"];
+const frontendPaths = ["../index.html", "../skill-engine.js", "../skill-rules.js", "../builtin-skills.js"];
 const frontend = frontendPaths.map(read).join("\n");
 const worker = read("../worker.js");
 const skillEngine = read("../skill-engine.js");

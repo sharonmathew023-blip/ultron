@@ -4,17 +4,24 @@
 // Required secret:
 //   GEMINI_API_KEY
 // Optional settings (Worker > Settings > Variables and Secrets):
-//   ALLOWED_ORIGINS  comma-separated site origins. When unset, any site may call
+//   ALLOWED_ORIGINS  comma-separated site origins. When unset, browsers may call only from
+//                    https://sharonmathew023-blip.github.io. "*" is ignored.
 //   DEFAULT_MODEL    model used when a request does not name one
 //   FALLBACK_MODEL   first backup model, tried when the requested one is busy
 //   FALLBACK_MODELS  comma-separated backups (default gemini-3.6-flash,
 //                    gemini-flash-lite-latest)
+//   GROQ_API_KEY     optional backup provider, used when every Gemini model is busy
+//   GROQ_MODEL       model for that backup (default llama-3.3-70b-versatile)
+//   GOOGLE_CLIENT_ID, ULTRON_OWNER_EMAIL, COMPOSIO_API_KEY  sign-in and owner-only routes
 //
 // Routes:
-//   GET  /health            -> { ok, hasKey }
+//   GET  /health            -> { ok, hasKey, hasGroqKey, cooldownStore, skillEngine }
 //   GET  /models            -> OpenAI-style model list
-//   POST /chat/completions  -> streams the reply
-//// Errors are JSON: { error: { message, type, code } } with a real HTTP status.
+//   POST /chat/completions  -> streams the reply (Google sign-in required)
+//   POST /browse            -> owner only: reads a public HTTPS page
+//   *    /composio/*        -> owner only: connected-app setup
+//
+// Errors are JSON: { error: { message, type, code } } with a real HTTP status.
 
 // Skill Engine 2.0 shares its parser, scanner, and tool catalog with the browser.
 import "./skill-rules.js";
@@ -1143,6 +1150,9 @@ function isUltronOwner(identity, env) {
 /* ---------- Google ID token verification ---------- */
 let googleJwksCache = null;
 let googleJwksExpiresAt = 0;
+let googleJwksFetchedAt = 0;
+let googleJwksInflight = null;
+const JWKS_FORCE_REFRESH_MIN_MS = 60_000; // a made-up key id may trigger at most one refresh a minute
 
 function decodeBase64Url(value) {
   const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
@@ -1153,6 +1163,13 @@ function decodeBase64Url(value) {
 
 async function getGoogleJwks(forceRefresh = false) {
   if (!forceRefresh && googleJwksCache && Date.now() < googleJwksExpiresAt) return googleJwksCache;
+  // Requests that arrive together share one fetch instead of each hitting Google.
+  if (!googleJwksInflight) googleJwksInflight = fetchGoogleJwks().finally(() => { googleJwksInflight = null; });
+  return googleJwksInflight;
+}
+
+async function fetchGoogleJwks() {
+  googleJwksFetchedAt = Date.now();
   const discoveryResponse = await fetch("https://accounts.google.com/.well-known/openid-configuration", { signal: AbortSignal.timeout(7000) });
   if (!discoveryResponse.ok) throw new Error("Google OpenID discovery unavailable");
   const discovery = await discoveryResponse.json();
@@ -1180,7 +1197,9 @@ async function verifyGoogleIdToken(token, clientId) {
   if (header.alg !== "RS256" || !header.kid) return null;
   let keys = await getGoogleJwks();
   let jwk = keys.find(key => key.kid === header.kid && key.alg === "RS256" && key.use === "sig");
-  if (!jwk) {
+  // An unknown key id may mean Google rotated its keys, so refresh once. The limit stops
+  // anyone from forcing two outbound fetches per request with a made-up key id.
+  if (!jwk && Date.now() - googleJwksFetchedAt >= JWKS_FORCE_REFRESH_MIN_MS) {
     keys = await getGoogleJwks(true);
     jwk = keys.find(key => key.kid === header.kid && key.alg === "RS256" && key.use === "sig");
   }
