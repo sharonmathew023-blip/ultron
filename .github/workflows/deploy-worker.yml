@@ -1,0 +1,66 @@
+name: Deploy ULTRON Worker
+
+# Deploys the Cloudflare Worker from this repository with logs visible in GitHub.
+# This is the fallback for when the Cloudflare Git integration
+# ("Workers Builds: openclaude-api") fails without showing why.
+#
+# Until CLOUDFLARE_API_TOKEN is set as a repository secret, every step is skipped
+# and this workflow reports success instead of adding another failing check.
+# Optional: set a CLOUDFLARE_ACCOUNT_ID repository variable to override the default.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID || 'a9ddd9a375e414a9859a12233ee5a62e' }}
+    steps:
+      - name: Check deploy credentials
+        id: creds
+        run: |
+          if [ -n "$CF_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Worker deploy skipped::Add CLOUDFLARE_API_TOKEN as a repository secret to deploy from GitHub Actions."
+          fi
+
+      - name: Check out repository
+        if: steps.creds.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: steps.creds.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check Worker syntax
+        if: steps.creds.outputs.ready == 'true'
+        run: node --check worker.js
+
+      - name: Run security checks
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          node tests/inline-scripts.test.mjs
+          node tests/security.test.mjs
+
+      - name: Deploy Worker
+        if: steps.creds.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CF_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT }}
+          command: deploy
