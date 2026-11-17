@@ -1588,6 +1588,7 @@ function setDir(d){const map={up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right
 function restart(){clearInterval(timer);snake=[{x:8,y:6},{x:7,y:6},{x:6,y:6}];dir=next={x:1,y:0};score=0;alive=true;scoreEl.textContent='Score: 0';placeFood();draw();timer=setInterval(tick,145);}
 root.querySelectorAll('[data-dir]').forEach(b=>b.addEventListener('click',()=>setDir(b.dataset.dir)));root.querySelector('.snake-restart').addEventListener('click',restart);const key=e=>{const map={ArrowUp:'up',w:'up',ArrowDown:'down',s:'down',ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right'};if(map[e.key]){e.preventDefault();setDir(map[e.key]);}};root.addEventListener('pointerdown',()=>root.focus());root.tabIndex=0;root.addEventListener('keydown',key);restart();
 }
+function showFeedbackThanks(){let node=document.getElementById('feedbackThanksToast');if(!node){node=document.createElement('div');node.id='feedbackThanksToast';node.className='feedback-thanks-toast';node.setAttribute('role','status');node.setAttribute('aria-live','polite');document.body.appendChild(node);}node.textContent='Thanks for your feedback!';node.classList.remove('show');void node.offsetWidth;node.classList.add('show');clearTimeout(window.__ultronFeedbackToastTimer);window.__ultronFeedbackToastTimer=setTimeout(()=>node.classList.remove('show'),2200);}
 function renderChat() {
 const container = document.getElementById('chatContainer');
 const thread = state.threads.find(t => t.id === state.activeThreadId);
@@ -1631,16 +1632,17 @@ ${m.hasArtifact ? `<button class="artifact-pill" onclick="openArtifactPane()">�
 if (m.role !== 'user' && (String(m.content || '').trim() || m.isError)) {
 const actions = document.createElement('div');
 actions.className = 'msg-actions';
-const addAction = (label, title, handler, extra='') => { const b=document.createElement('button'); b.className='msg-action-btn '+extra; b.type='button'; b.textContent=label; b.title=title; b.setAttribute('aria-label',title); b.addEventListener('click',handler); actions.appendChild(b); return b; };
-const copyButton=addAction('Copy','Copy response',async()=>{try{await navigator.clipboard.writeText(m.content||'');copyButton.textContent='Copied';}catch(_){copyButton.textContent='Unavailable';}setTimeout(()=>{copyButton.textContent='Copy';},1400);});
+const icons={copy:'<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',good:'<svg viewBox="0 0 24 24"><path d="M7 10v10H4a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h3Zm0 0 5-7a3 3 0 0 1 2 3l-1 4h5a3 3 0 0 1 3 4l-2 6a3 3 0 0 1-3 2H7"/></svg>',bad:'<svg viewBox="0 0 24 24"><path d="M7 14V4H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h3Zm0 0 5 7a3 3 0 0 0 2-3l-1-4h5a3 3 0 0 0 3-4l-2-6a3 3 0 0 0-3-2H7"/></svg>',speak:'<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a5 5 0 0 1 0 6M18 6a9 9 0 0 1 0 12"/></svg>',share:'<svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.7 10.7 6.6-4.4m-6.6 7 6.6 4.4"/></svg>',retry:'<svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg>'};
+const addAction = (key,title,handler,extra='') => {const b=document.createElement('button');b.className='msg-action-btn msg-icon-btn '+extra;b.type='button';b.innerHTML=icons[key];b.title=title;b.setAttribute('aria-label',title);b.addEventListener('click',handler);actions.appendChild(b);return b;};
+const copyButton=addAction('copy','Copy response',async()=>{try{await navigator.clipboard.writeText(m.content||'');copyButton.title='Copied';copyButton.setAttribute('aria-label','Copied');}catch(_){copyButton.title='Copy unavailable';}setTimeout(()=>{copyButton.title='Copy response';copyButton.setAttribute('aria-label','Copy response');},1400);});
 if(!m.isError){
-addAction(m.feedback==='good'?'👍':'👍','Good response',()=>{m.feedback=m.feedback==='good'?'': 'good';renderChat();},m.feedback==='good'?'is-selected':'');
-addAction(m.feedback==='bad'?'👎':'👎','Bad response',()=>{m.feedback=m.feedback==='bad'?'':'bad';renderChat();},m.feedback==='bad'?'is-selected':'');
+addAction('good','Good response',()=>{m.feedback=m.feedback==='good'?'':'good';renderChat();showFeedbackThanks();},m.feedback==='good'?'is-selected':'');
+addAction('bad','Bad response',()=>{m.feedback=m.feedback==='bad'?'':'bad';renderChat();showFeedbackThanks();},m.feedback==='bad'?'is-selected':'');
 let speechActive=false;
-addAction('Speak','Read response aloud',e=>{if(!('speechSynthesis' in window)){return;}if(speechActive){speechSynthesis.cancel();speechActive=false;return;}speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(m.content||'');utterance.onend=()=>{speechActive=false;};speechActive=true;speechSynthesis.speak(utterance);});
-addAction('Share','Share response',async()=>{const text=m.content||'';try{if(navigator.share)await navigator.share({text});else{await navigator.clipboard.writeText(text);}}catch(_){} });
+addAction('speak','Read response aloud',()=>{if(!('speechSynthesis' in window))return;if(speechActive){speechSynthesis.cancel();speechActive=false;return;}speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(m.content||'');utterance.onend=()=>{speechActive=false;};speechActive=true;speechSynthesis.speak(utterance);});
+addAction('share','Share response',async()=>{const text=m.content||'';try{if(navigator.share)await navigator.share({text});else await navigator.clipboard.writeText(text);}catch(_){} });
 }
-if(m.isError){const retryButton=addAction('↻ Retry','Retry this failed response',()=>retryFailedMessage(messageIndex),'msg-retry-btn');retryButton.disabled=activeRequest!==null||messageIndex!==thread.messages.length-1;}
+if(m.isError){const retryButton=addAction('retry','Retry this failed response',()=>retryFailedMessage(messageIndex),'msg-retry-btn');retryButton.disabled=activeRequest!==null||messageIndex!==thread.messages.length-1;}
 row.appendChild(actions);
 }
 container.appendChild(row);
