@@ -50,7 +50,10 @@ const COOLDOWN_KV_KEY = "model-cooldowns:v1";
 let modelListCache = { expiresAt: 0, data: null };
 const COOLDOWN_CACHE_MS = 3_000; // re-read the KV copy at most this often
 const TOTAL_BUDGET_MS = 45_000; // Gemini gets at most this long
-const CLIENT_DEADLINE_MS = 55_000; // the browser gives up after 60s with no data, so Gemini plus Groq must fit in this
+const CLIENT_DEADLINE_MS = 50_000; // leave 10s before the browser's 60s idle watchdog
+const CLIENT_SAFETY_MS = 3_000; // reserve time for response delivery and mobile scheduling
+const GROQ_RESERVE_MS = 12_000; // reserve a bounded window for the backup provider
+const SSE_HEARTBEAT_MS = 15_000;
 // Skills may only narrow the Worker's read-only tool access. Nothing in a
 // request can widen these grants, and write tools never exist here.
 const GRANTABLE_SKILL_TOOLS = new Set(["web.read", "github.read"]);
@@ -60,6 +63,7 @@ const MAX_SKILLS_PER_REQUEST = 8;
 
 export default {
   async fetch(request, env, ctx) {
+    const requestStarted = Date.now(); // include cold-start-adjacent auth, rate limits and body parsing in the deadline
     const url = new URL(request.url);
     const cors = corsFor(request, env);
     const reply = (data, status = 200, extra) => jsonResponse(data, status, cors.headers, extra);
@@ -262,8 +266,10 @@ export default {
     }
 
     const chain = buildModelChain(model, env);
-    const chatStarted = Date.now();
-    const result = await callGemini(chain, JSON.stringify(geminiBody), env.GEMINI_API_KEY, makeHealth(env, ctx));
+    const elapsedBeforeProvider = Date.now() - requestStarted;
+    const geminiBudgetMs = Math.min(TOTAL_BUDGET_MS, CLIENT_DEADLINE_MS - elapsedBeforeProvider - GROQ_RESERVE_MS - CLIENT_SAFETY_MS);
+    if (geminiBudgetMs < MIN_ATTEMPT_MS) return fail(503, "The request took too long to prepare. Please retry.");
+    const result = await callGemini(chain, JSON.stringify(geminiBody), env.GEMINI_API_KEY, makeHealth(env, ctx), geminiBudgetMs);
     if (result.error) {
       // Use the independent provider only for upstream availability failures.
       // callGemini normalizes exhausted regional-routing 400s into a 503 busy
@@ -274,10 +280,11 @@ export default {
           return fail(503, "Gemini is unavailable and the Groq backup is not configured on this Worker. Add GROQ_API_KEY under the Production environment's Variables and Secrets, then redeploy.");
         }
         // Groq cannot search, and it only gets what is left of the browser's patience.
-        const backupMs = Math.min(30_000, Math.max(5_000, CLIENT_DEADLINE_MS - (Date.now() - chatStarted)));
+        const backupMs = Math.min(GROQ_RESERVE_MS, CLIENT_DEADLINE_MS - (Date.now() - requestStarted) - CLIENT_SAFETY_MS);
+        if (backupMs < MIN_ATTEMPT_MS) return fail(503, "Gemini is unavailable and there is not enough time left for the backup provider. Please retry.");
         const backup = await callGroqFallback(forBackupProvider(input, activeMode), env, backupMs);
         if (backup.res) {
-          return new Response(backup.res.body, {
+          return new Response(withSseHeartbeat(backup.res.body, SSE_HEARTBEAT_MS), {
             headers: {
               ...cors.headers,
               "Content-Type": "text/event-stream; charset=utf-8",
@@ -296,7 +303,7 @@ export default {
       return fail(result.error.status, result.error.message, extra);
     }
 
-    return new Response(toOpenAIStream(result.res.body, result.model), {
+    return new Response(withSseHeartbeat(toOpenAIStream(result.res.body, result.model), SSE_HEARTBEAT_MS), {
       headers: {
         ...cors.headers,
         "Content-Type": "text/event-stream; charset=utf-8",
@@ -977,7 +984,7 @@ async function callGroqFallback(input, env, timeoutMs = 30_000) {
   }
 }
 
-async function callGemini(chain, body, apiKey, health) {
+async function callGemini(chain, body, apiKey, health, budgetMs = TOTAL_BUDGET_MS) {
   const started = Date.now();
   const tried = [];
   let last = { status: 502, message: "Could not reach the Gemini API." };
@@ -988,7 +995,7 @@ async function callGemini(chain, body, apiKey, health) {
     // A model that is resting gets one quick try as a last resort, not a full set of retries.
     const attempts = health.isResting(model) ? 1 : ATTEMPTS_PER_MODEL;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      const left = TOTAL_BUDGET_MS - (Date.now() - started);
+      const left = budgetMs - (Date.now() - started);
       if (left < MIN_ATTEMPT_MS) return { error: busyError(tried, last) };
 
       const outcome = await callModel(model, body, apiKey, Math.min(HEADERS_TIMEOUT_MS, left));
@@ -1044,6 +1051,45 @@ function extractMessage(text) {
     message = text;
   }
   return redact(message).slice(0, 300);
+}
+
+/* ---------- SSE keep-alive ---------- */
+// SSE comments are ignored by OpenAI-style clients but reset idle timers on mobile browsers.
+function withSseHeartbeat(body, intervalMs = SSE_HEARTBEAT_MS) {
+  const reader = body.getReader();
+  const enc = new TextEncoder();
+  let timer;
+  let finished = false;
+  return new ReadableStream({
+    start(controller) {
+      timer = setInterval(() => {
+        if (!finished) {
+          try { controller.enqueue(enc.encode(": keep-alive\\n\\n")); } catch { /* stream already closed */ }
+        }
+      }, intervalMs);
+      (async () => {
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+          finished = true;
+          clearInterval(timer);
+          controller.close();
+        } catch (error) {
+          finished = true;
+          clearInterval(timer);
+          controller.error(error);
+        }
+      })();
+    },
+    cancel(reason) {
+      finished = true;
+      clearInterval(timer);
+      return reader.cancel(reason);
+    },
+  });
 }
 
 /* ---------- Gemini SSE -> OpenAI SSE ---------- */
