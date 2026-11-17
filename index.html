@@ -1101,6 +1101,7 @@ function onGoogleCredential(response) {
   try { sessionStorage.setItem(GOOGLE_SESSION_KEY, googleCredential); } catch (_) {}
   googleAccountEmail = payload.email || 'Google account';
   googleAccountName = payload.given_name || (payload.name ? payload.name.split(' ')[0] : '') || '';
+  void activateAccountWorkspace();
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
@@ -1109,6 +1110,7 @@ function onGoogleCredential(response) {
 }
 function restoreGoogleSessionUI() {
   if (!getGoogleCredential()) return false;
+  void activateAccountWorkspace();
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
   const greeting=document.getElementById('greetingName');if(greeting)greeting.textContent=googleAccountName||'there';
@@ -1145,6 +1147,17 @@ function initializeGoogleSignIn(attempt=0) {
   }
 }
 const STORAGE_KEY = 'openclaude_worker_v3';
+let activeStorageKey = null;
+let activeAccountEmail = '';
+let activeThreadDbName = '';
+function getAccountStorageKey() {
+  if (!googleAccountEmail || googleAccountEmail === 'Google account') return null;
+  return STORAGE_KEY + ':' + encodeURIComponent(googleAccountEmail.trim().toLowerCase());
+}
+function getThreadDatabaseName() {
+  if (!googleAccountEmail || googleAccountEmail === 'Google account') return '';
+  return 'openclaude-thread-store:' + encodeURIComponent(googleAccountEmail.trim().toLowerCase());
+}
 try { localStorage.removeItem('openclaude_direct_v2'); } catch (_) {}
 const defaultState = {
 theme: 'dark',
@@ -1193,7 +1206,7 @@ const THREAD_DB_VERSION = 1;
 function openThreadDatabase() {
 return new Promise((resolve, reject) => {
 if (!('indexedDB' in window)) { reject(new Error('IndexedDB is unavailable')); return; }
-const request = indexedDB.open(THREAD_DB_NAME, THREAD_DB_VERSION);
+const request = indexedDB.open(activeThreadDbName || THREAD_DB_NAME, THREAD_DB_VERSION);
 request.onupgradeneeded = () => {
 const db = request.result;
 if (!db.objectStoreNames.contains('threads')) {
@@ -1240,7 +1253,7 @@ const safe = { ...state };
 delete safe.threads;
 delete safe.accessToken; // private Worker tokens must never enter persistent browser storage
 safe.threadStorageVersion = THREAD_DB_VERSION;
-localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(safe));
 }
 
 function scheduleThreadSave() {
@@ -1254,7 +1267,7 @@ threadWriteQueue = threadWriteQueue.then(() => writeThreadSnapshot(threadDatabas
 .catch(error => {
 console.warn('OpenClaude IndexedDB save failed; returning to browser storage:', error);
 threadStorageReady = false;
-try { const fallbackSafe = { ...state }; delete fallbackSafe.accessToken; localStorage.setItem(STORAGE_KEY, JSON.stringify(fallbackSafe)); } catch (fallbackError) {
+try { const fallbackSafe = { ...state }; delete fallbackSafe.accessToken; localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(fallbackSafe)); } catch (fallbackError) {
 console.warn('OpenClaude browser storage fallback also failed:', fallbackError);
 }
 });
@@ -1274,6 +1287,7 @@ threadWriteQueue = threadWriteQueue.then(() => writeThreadSnapshot(threadDatabas
 }
 
 async function initializeThreadStorage() {
+if (!activeStorageKey || !activeThreadDbName) return;
 try {
 const db = await openThreadDatabase();
 const records = await readThreadRecords(db);
@@ -1302,7 +1316,36 @@ console.warn('OpenClaude is using browser storage because IndexedDB could not st
 }
 }
 
+async function activateAccountWorkspace() {
+  const email = (googleAccountEmail || '').trim().toLowerCase();
+  const storageKey = getAccountStorageKey();
+  const databaseName = getThreadDatabaseName();
+  if (!email || !storageKey || !databaseName) return;
+  if (activeAccountEmail === email && activeStorageKey === storageKey && threadStorageReady) return;
+  if (threadSaveTimer) clearTimeout(threadSaveTimer);
+  if (threadStorageReady) flushThreadSave();
+  await threadWriteQueue;
+  try { if (threadDatabase) threadDatabase.close(); } catch (_) {}
+  threadDatabase = null;
+  threadStorageReady = false;
+  activeAccountEmail = email;
+  activeStorageKey = storageKey;
+  activeThreadDbName = databaseName;
+  state = readStoredState();
+  if (state.systemPrompt === 'You are OpenClaude, a helpful, concise, open-source AI assistant.') {
+    state.systemPrompt = 'You are ULTRON, a helpful, concise AI assistant.';
+  }
+  const requestedChat = (location.hash.match(/(?:^#|&)chat=([^&]+)/) || [])[1];
+  if (requestedChat) {
+    const target = state.threads.find(thread => thread.id === decodeURIComponent(requestedChat));
+    if (target) state.activeThreadId = target.id;
+  }
+  renderSidebar();
+  renderChat();
+  await initializeThreadStorage();
+}
 function saveState() {
+if (!activeStorageKey) return;
 if (threadStorageReady) {
 scheduleThreadSave();
 return;
@@ -1310,7 +1353,7 @@ return;
 try {
 const safe = { ...state };
 delete safe.accessToken; // keep the owner token in memory only; never persist it
-localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(safe));
 } catch (error) { console.warn('OpenClaude could not save local settings:', error); }
 }
 let selectedAttachments = [];
@@ -1785,7 +1828,7 @@ function animateNewConversation(){
 // Read stored data defensively so one damaged localStorage value cannot blank the app.
 function readStoredState() {
 try {
-const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+const saved = JSON.parse(localStorage.getItem(activeStorageKey || STORAGE_KEY) || 'null');
 if (!saved || typeof saved !== 'object') return structuredClone(defaultState);
 const restored = {
 ...structuredClone(defaultState),
@@ -1800,8 +1843,9 @@ console.warn('OpenClaude storage could not be read:', error);
 return structuredClone(defaultState);
 }
 }
-// Replace the original state only when the page first loads.
-state = readStoredState();
+// Conversation state is loaded only after Google identity is known.
+// The old unscoped workspace is deliberately not auto-imported: its owner cannot be verified.
+state = structuredClone(defaultState);
 if (state.systemPrompt === 'You are OpenClaude, a helpful, concise, open-source AI assistant.') {
   state.systemPrompt = 'You are ULTRON, a helpful, concise AI assistant.';
 }
@@ -2464,10 +2508,21 @@ renderAttachmentPreview();updateComposerAction();event.target.value='';
 });
 document.getElementById('connectGithubBtn').addEventListener('click', connectGithub);
 document.getElementById('checkConnectorsBtn').addEventListener('click', checkConnectorStatus);
-document.getElementById('googleSignOutBtn').addEventListener('click', () => {
+document.getElementById('googleSignOutBtn').addEventListener('click', async () => {
+  if (threadStorageReady) flushThreadSave();
+  await threadWriteQueue;
   googleCredential = null;
   googleAccountEmail = '';
   googleAccountName = '';
+  activeAccountEmail = '';
+  activeStorageKey = null;
+  activeThreadDbName = '';
+  threadStorageReady = false;
+  try { if (threadDatabase) threadDatabase.close(); } catch (_) {}
+  threadDatabase = null;
+  state = structuredClone(defaultState);
+  renderSidebar();
+  renderChat();
   try { sessionStorage.removeItem(GOOGLE_SESSION_KEY); } catch (_) {}
   if (window.google?.accounts?.id) window.google.accounts.id.disableAutoSelect();
   document.getElementById('googleAccountLabel').textContent = 'Not signed in';
@@ -2513,7 +2568,6 @@ window.SkillEngineUI.init({
   }
 });
 renderSkillList();
-void initializeThreadStorage();
 </script>
 </body>
 </html>
