@@ -427,8 +427,14 @@ test("Groq provider fallback gives up at the timeout it is handed", async () => 
   globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
     init.signal.addEventListener("abort", () => reject(init.signal.reason));
   });
+  // AbortSignal.timeout timers are unref'd, so hold the event loop open until the abort fires.
+  const keepAlive = setTimeout(() => {}, 5000);
   const started = Date.now();
-  const result = await W.callGroqFallback({ messages: [{ role: "user", content: "Hi" }] }, { GROQ_API_KEY: "gsk-test" }, 40);
-  assert.match(result.message, /timed out/);
-  assert.ok(Date.now() - started < 2000);
+  try {
+    const result = await W.callGroqFallback({ messages: [{ role: "user", content: "Hi" }] }, { GROQ_API_KEY: "gsk-test" }, 40);
+    assert.match(result.message, /timed out/);
+    assert.ok(Date.now() - started < 2000);
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
