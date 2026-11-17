@@ -947,7 +947,6 @@ svg.ui-icon{width:16px;height:16px;flex:0 0 16px;fill:none;stroke:currentColor;s
 <div class="chat-container" id="chatContainer"></div>
 </div>
 <div class="composer-wrap">
-<div class="mode-toggle" role="tablist" aria-label="Conversation mode"><button class="mode-toggle-btn active" type="button" data-mode="chat" role="tab" aria-selected="true">Chat</button><button class="mode-toggle-btn" type="button" data-mode="research" role="tab" aria-selected="false">Research</button><button class="mode-toggle-btn" type="button" data-mode="agent" role="tab" aria-selected="false">Agent</button><button class="mode-toggle-btn" type="button" data-mode="studio" role="tab" aria-selected="false">Studio</button><button class="mode-toggle-btn" type="button" data-mode="developer" role="tab" aria-selected="false">Developer</button></div>
 <div id="skillStrip" class="skill-strip" aria-live="polite" hidden></div>
 <div class="composer-box">
 <div class="attachment-row"><button class="footer-btn attach-btn" type="button" id="attachFilesBtn" aria-label="Attach files" title="Attach files"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><input id="attachmentInput" type="file" multiple accept="image/*,application/pdf,text/*,.md,.csv,.json,.js,.ts,.py,.html,.css,.xml,.yaml,.yml,.log" hidden></div>
@@ -2325,11 +2324,7 @@ document.getElementById('mobileNewChatBtn').addEventListener('click', createNewT
 document.getElementById('topProfileBtn').addEventListener('click', () => document.getElementById('openSettingsBtn').click());
 document.getElementById('sendBtn').addEventListener('click', handleSend);
 
-document.querySelectorAll('.mode-toggle-btn').forEach(button=>button.addEventListener('click',()=>{
- currentComposerMode=button.dataset.mode||'chat';
- document.querySelectorAll('.mode-toggle-btn').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-selected',active?'true':'false');});
- document.getElementById('promptInput').placeholder=({research:'Research a topic with sources...',agent:'Describe a task for ULTRON...',studio:'Describe what to build...',developer:'Ask about code, GitHub or deploys...'})[currentComposerMode]||'Ask ULTRON...';
-}));
+currentComposerMode = 'chat';
 const promptEl = document.getElementById('promptInput');
 promptEl.addEventListener('keydown', e => {
   const isEnter = e.key === 'Enter' || e.keyCode === 13 || (e.keyCode === 229 && e.code === 'Enter');
