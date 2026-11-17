@@ -6,68 +6,72 @@ A browser-based AI workspace with a responsive chat interface, conversation hist
 
 ## Features
 
-- Responsive chat UI with desktop and mobile layouts.
-- Conversation creation, search, deletion, and local browser history.
+- Responsive chat interface for desktop and mobile.
+- Conversation creation, search, deletion, and browser-local history.
 - Dark and light themes.
-- Streaming Gemini responses through an OpenAI-compatible endpoint.
-- Google Identity Services sign-in verified by the Worker.
+- Streaming AI responses through an OpenAI-compatible Worker endpoint.
+- Google sign-in verified by the Worker.
 - Per-account and per-IP rate limiting.
 - Model fallback and cooldown handling.
-- Skill Engine with built-in and imported skills, prompt checks, and restricted read-only tool access.
-- Owner-gated Composio/GitHub integration.
-- HTML artifact preview, code view, and download.
+- Built-in and imported skills with validation.
+- Owner-gated connected-app integrations.
+- Sandboxed HTML artifact preview, code view, and download.
 - JSON conversation export.
 
 ## Architecture
 
-- `index.html`, `styles.css`: application UI.
-- `skill-rules.js`, `skill-engine.js`, `builtin-skills.js`: skill parsing, validation, activation, and UI.
-- `worker.js`: Cloudflare Worker API, Google token verification, rate limiting, Gemini streaming, model fallback, and owner-only integrations.
-- `wrangler.toml`: Worker deployment and binding configuration.
-- `worker.test.mjs` and `tests/`: automated tests.
+| File | Responsibility |
+| --- | --- |
+| `index.html`, `styles.css` | Application interface |
+| `skill-rules.js`, `skill-engine.js`, `builtin-skills.js` | Skill parsing, validation, activation, and UI |
+| `worker.js` | API, authentication, rate limiting, AI streaming, fallback, and owner-only integrations |
+| `wrangler.toml` | Cloudflare Worker configuration |
+| `worker.test.mjs`, `tests/` | Automated tests |
 
-## Local development
+## Run locally
 
-Serve the repository root with a static HTTP server:
+Use Node.js 20+ for the test suite. Serve the frontend from the repository root:
 
 ```bash
 python -m http.server 8000
 ```
 
-Open http://localhost:8000. The hosted chat backend still requires its configured Cloudflare Worker services and secrets.
+Open http://localhost:8000.
 
-Run the Worker tests with Node.js 20 or newer:
+Run tests:
 
 ```bash
 node --test worker.test.mjs
 node --test tests/*.test.mjs
 ```
 
+The hosted chat backend still depends on the configured Cloudflare Worker services and secrets.
+
 ## Worker configuration
 
-Configure secrets in Cloudflare, never in committed source files:
+Set secrets in Cloudflare. Never commit provider keys or consumer credentials.
 
 - `GEMINI_API_KEY`
 - `GOOGLE_CLIENT_ID`
 - `ULTRON_OWNER_EMAIL` for owner-only features
-- `COMPOSIO_API_KEY` for the connected-app integration
+- `COMPOSIO_API_KEY` for connected-app integration
 
-Configure the rate-limiter bindings and optional `ULTRON_STATE` KV namespace as described by `wrangler.toml`. Set `ALLOWED_ORIGINS` to the exact production origin when restricting browser access.
+Configure rate-limiter bindings and the optional `ULTRON_STATE` KV namespace as described in `wrangler.toml`. Set `ALLOWED_ORIGINS` to the exact production origin when restricting browser access.
 
 ## Security notes
 
-- Keep provider keys and consumer API keys in Worker secrets.
-- The Worker verifies Google ID tokens; frontend state is not an authentication boundary.
-- Imported skills are untrusted input and must remain subject to the browser and Worker validation.
-- Connected tools are owner-gated and restricted to read-only capabilities.
-- Treat generated HTML as untrusted, even when it is rendered in a sandboxed preview.
+- The Worker verifies Google ID tokens. Frontend state is not an authentication boundary.
+- Imported skills are untrusted input and must pass validation.
+- Connected tools are owner-gated and restricted by the Worker.
+- Generated HTML must remain isolated in a sandboxed preview.
+- Keep all service-role keys and provider secrets out of browser code and Git history.
 
-## Limitations
+## Known limitations
 
 - Conversation history is stored in the current browser and does not automatically sync across devices.
 - Clearing browser site data removes local conversations.
 - Demo mode is a UI preview, not an offline AI model.
-- Availability and model names depend on the configured Google AI account and Worker settings.
+- Available models depend on the configured provider account and Worker settings.
 
 ## License
 
