@@ -733,7 +733,7 @@ function detectImageGenerationRequest(messages) {
   if (/^(what|why|how|when|where|who|explain|describe|tell me|can you explain)\b/i.test(text)) return null;
   if (/\b(website|web app|application|game|program|code|script|spreadsheet|document)\b/i.test(text) && !/\b(image|picture|illustration|artwork|wallpaper|poster|drawing|photo)\b/i.test(text)) return null;
   const asksToCreate = /\b(create|generate|draw|paint|render|make|produce|design)\b/i.test(text);
-  const asksForImage = /\b(image|picture|artwork|illustration|wallpaper|poster|drawing|photo|portrait|landscape)\b/i.test(text);
+  const asksForImage = /\b(image|picture|artwork|illustration|wallpaper|poster|drawing|photo|portrait|landscape|logo|icon|thumbnail|banner|graphic|social media post)\b/i.test(text);
   if (!asksToCreate || !asksForImage) return null;
   return { prompt: text.slice(0, 2048) };
 }
