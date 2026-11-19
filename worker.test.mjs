@@ -551,6 +551,7 @@ test("e2e: Gemini 503 and an image attachment -> Groq is skipped, reason reporte
 test("image intent: explicit create/draw requests are detected, explanations and code are not", () => {
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Create an image of a horse in a misty forest" }]), { prompt: "Create an image of a horse in a misty forest" });
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Draw a cinematic Kerala monsoon wallpaper" }]), { prompt: "Draw a cinematic Kerala monsoon wallpaper" });
+  assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Generate a logo for my video editing brand" }]), { prompt: "Generate a logo for my video editing brand" });
   assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "What is image generation and how does FLUX work?" }]), null);
   assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "Create a website about horses" }]), null);
   assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "Describe this image" }]), null);
