@@ -729,7 +729,7 @@ function detectImageGenerationRequest(messages) {
   }
   if (!latest) return null;
   const text = textOf(latest.content).replace(/\s+/g, " ").trim();
-  if (!text || text.length < 8 || text.length > 2048) return null;
+  if (!text || text.length < 8) return null;
   if (/^(what|why|how|when|where|who|explain|describe|tell me|can you explain)\b/i.test(text)) return null;
   if (/\b(website|web app|application|game|program|code|script|spreadsheet|document)\b/i.test(text) && !/\b(image|picture|illustration|artwork|wallpaper|poster|drawing|photo)\b/i.test(text)) return null;
   const asksToCreate = /\b(create|generate|draw|paint|render|make|produce|design)\b/i.test(text);

@@ -552,6 +552,11 @@ test("image intent: explicit create/draw requests are detected, explanations and
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Create an image of a horse in a misty forest" }]), { prompt: "Create an image of a horse in a misty forest" });
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Draw a cinematic Kerala monsoon wallpaper" }]), { prompt: "Draw a cinematic Kerala monsoon wallpaper" });
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Generate a logo for my video editing brand" }]), { prompt: "Generate a logo for my video editing brand" });
+  const detailed = "Create an ultra-realistic cinematic image of a Kerala monsoon forest. " + "Detailed lighting, composition, atmosphere and realistic textures. ".repeat(45);
+  const longResult = W.detectImageGenerationRequest([{ role: "user", content: detailed }]);
+  assert.ok(longResult, "long image prompts must still route to FLUX");
+  assert.equal(longResult.prompt.length, 2048, "only the prompt sent to FLUX is capped at 2048 characters");
+  assert.ok(longResult.prompt.startsWith("Create an ultra-realistic cinematic image"));
   assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "What is image generation and how does FLUX work?" }]), null);
   assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "Create a website about horses" }]), null);
   assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "Describe this image" }]), null);
