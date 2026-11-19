@@ -2,6 +2,9 @@ name = "openclaude-api"
 main = "worker.js"
 compatibility_date = "2026-11-07"
 
+[ai]
+binding = "AI"
+
 [vars]
 GOOGLE_CLIENT_ID = "299929778437-b5t5kpo1b83nmlp44aj4oerhbkl876gj.apps.googleusercontent.com"
 DEFAULT_MODEL = "gemini-3.5-flash"
