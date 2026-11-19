@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
@@ -544,4 +544,42 @@ test("e2e: Gemini 503 and an image attachment -> Groq is skipped, reason reporte
   assert.equal(res.status, 502);
   assert.match(await res.text(), /image or document attachment/);
   assert.equal(t.seen.groq, 0);
+});
+
+
+// --- FLUX image generation --------------------------------------------------
+test("image intent: explicit create/draw requests are detected, explanations and code are not", () => {
+  assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Create an image of a horse in a misty forest" }]), { prompt: "Create an image of a horse in a misty forest" });
+  assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Draw a cinematic Kerala monsoon wallpaper" }]), { prompt: "Draw a cinematic Kerala monsoon wallpaper" });
+  assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "What is image generation and how does FLUX work?" }]), null);
+  assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "Create a website about horses" }]), null);
+  assert.equal(W.detectImageGenerationRequest([{ role: "user", content: "Describe this image" }]), null);
+});
+
+test("e2e: explicit image request returns binary JPEG from the Workers AI binding", async () => {
+  const t = await e2eSetup({ gemini: () => { throw new Error("Gemini must not be called for image generation"); }, groq: () => { throw new Error("Groq must not be called for image generation"); } });
+  let called = null;
+  const ai = { run: async (model, options) => { called = { model, options }; return { image: "AQIDBA==" }; } };
+  const res = await t.post(t.env({ AI: ai }), [{ role: "user", content: "Create an image of a horse in a misty forest" }]);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("Content-Type"), "image/jpeg");
+  assert.equal(res.headers.get("X-ULTRON-Image-Model"), "flux-1-schnell");
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [1, 2, 3, 4]);
+  assert.equal(called.model, "@cf/black-forest-labs/flux-1-schnell");
+  assert.equal(called.options.steps, 4);
+  assert.equal(called.options.prompt, "Create an image of a horse in a misty forest");
+  assert.equal(t.seen.gemini, 0);
+  assert.equal(t.seen.groq, 0);
+});
+
+
+test("e2e: ordinary text chat stays on Gemini even when Workers AI is available", async () => {
+  const t = await e2eSetup({ gemini: () => okStream([sse("normal chat response", { finishReason: "STOP" })]), groq: () => { throw new Error("Groq must not be called"); } });
+  let aiCalls = 0;
+  const res = await t.post(t.env({ AI: { run: async () => { aiCalls++; return { image: "AQID" }; } }, DEFAULT_MODEL: "model-a" }), [{ role: "user", content: "Explain what a diffusion model is" }]);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("Content-Type"), /text\/event-stream/);
+  assert.match(await res.text(), /normal chat response/);
+  assert.equal(aiCalls, 0);
+  assert.equal(t.seen.gemini, 1);
 });

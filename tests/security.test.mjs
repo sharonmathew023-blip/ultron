@@ -32,6 +32,8 @@ assert.doesNotMatch(frontend, /localStorage\.setItem\(STORAGE_KEY,\s*JSON\.strin
 
 // Worker secrets remain environment bindings; privileged routes use verified Google identity.
 assert.match(worker, /env\.GEMINI_API_KEY/);
+assert.match(worker, /env\.AI\.run/ , "FLUX uses the server-side Workers AI binding");
+assert.match(worker, /@cf\/black-forest-labs\/flux-1-schnell/ , "image requests use FLUX Schnell");
 assert.match(worker, /env\.COMPOSIO_API_KEY/);
 assert.match(worker, /https:\/\/connect\.composio\.dev\/mcp/, "Composio uses the consumer MCP endpoint");
 assert.match(worker, /"x-consumer-api-key": apiKey/, "consumer keys use the consumer authentication header");
@@ -47,6 +49,7 @@ assert.match(worker, /env\.ULTRON_OWNER_EMAIL/);
 
 // Wrangler contains public configuration only, never secret assignments.
 assert.doesNotMatch(wrangler, /(?:GEMINI_API_KEY|COMPOSIO_API_KEY|ACCESS_TOKEN|ULTRON_OWNER_EMAIL)\s*=/);
+assert.match(wrangler, /\[ai\]\s+binding = "AI"/, "Workers AI binding is declared for deployments");
 
 // Verify the configured default chain and that the chain builder preserves order.
 assert.match(wrangler, /DEFAULT_MODEL = "gemini-3\.5-flash"/);

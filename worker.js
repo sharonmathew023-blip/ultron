@@ -254,6 +254,31 @@ export default {
     const geminiBody = buildGeminiBody(input);
     if (!geminiBody.contents.length) return fail(400, "No user or assistant messages were provided.");
 
+    // Explicit image requests use Workers AI directly. Ordinary questions, explanations,
+    // code/artifact requests and image-analysis attachments stay on the chat path.
+    const imageRequest = detectImageGenerationRequest(input.messages);
+    if (imageRequest) {
+      if (!env.AI || typeof env.AI.run !== "function") return fail(503, "Image generation is not configured. Check the Workers AI binding named AI.");
+      try {
+        const generated = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt: imageRequest.prompt, steps: 4 });
+        const encoded = generated && generated.image;
+        if (!encoded) throw new Error("FLUX returned an empty image.");
+        const bytes = typeof encoded === "string"
+          ? Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0))
+          : encoded instanceof ArrayBuffer ? new Uint8Array(encoded)
+          : ArrayBuffer.isView(encoded) ? new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength)
+          : null;
+        if (!bytes || !bytes.byteLength) throw new Error("FLUX returned an unsupported image payload.");
+        return new Response(bytes, {
+          status: 200,
+          headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": "flux-1-schnell", "X-ULTRON-Image-Prompt": encodeURIComponent(imageRequest.prompt) },
+        });
+      } catch (error) {
+        console.warn("[ultron] FLUX image generation failed: " + redact(error && error.message || "unknown error").slice(0, 180));
+        return fail(502, "Image generation failed. Please try again in a moment.");
+      }
+    }
+
     if (input.enableTools === true) {
       if (!isUltronOwner(googleIdentity, env)) {
         return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Connected app tools are restricted to the ULTRON owner account." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
@@ -694,6 +719,23 @@ function textOf(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map((p) => (p && typeof p.text === "string" ? p.text : "")).join("");
   return content == null ? "" : String(content);
+}
+
+function detectImageGenerationRequest(messages) {
+  if (!Array.isArray(messages)) return null;
+  let latest = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === "user") { latest = messages[i]; break; }
+  }
+  if (!latest) return null;
+  const text = textOf(latest.content).replace(/\s+/g, " ").trim();
+  if (!text || text.length < 8 || text.length > 2048) return null;
+  if (/^(what|why|how|when|where|who|explain|describe|tell me|can you explain)\b/i.test(text)) return null;
+  if (/\b(website|web app|application|game|program|code|script|spreadsheet|document)\b/i.test(text) && !/\b(image|picture|illustration|artwork|wallpaper|poster|drawing|photo)\b/i.test(text)) return null;
+  const asksToCreate = /\b(create|generate|draw|paint|render|make|produce|design)\b/i.test(text);
+  const asksForImage = /\b(image|picture|artwork|illustration|wallpaper|poster|drawing|photo|portrait|landscape)\b/i.test(text);
+  if (!asksToCreate || !asksForImage) return null;
+  return { prompt: text.slice(0, 2048) };
 }
 
 function partsOf(content) {
@@ -1244,7 +1286,7 @@ function corsFor(request, env) {
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Expose-Headers": "Retry-After, X-ULTRON-Model, X-ULTRON-Fallback",
+    "Access-Control-Expose-Headers": "Retry-After, X-ULTRON-Model, X-ULTRON-Fallback, X-ULTRON-Image-Model, X-ULTRON-Image-Prompt",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
