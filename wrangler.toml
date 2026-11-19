@@ -37,3 +37,7 @@ id = "310ce550e35b4bcdb0863355c14907f8"
 # Route outbound API work from the Worker’s optimal location.
 [placement]
 mode = "smart"
+
+# Workers Builds preview requires an explicit AI binding declaration.
+[previews.ai]
+binding = "AI"
