@@ -1926,6 +1926,20 @@ function imageBlobToDataUrl(blob) {
   });
 }
 
+async function resizeImageDataUrlForEdit(dataUrl, maxSide = 512) {
+  const image = await new Promise((resolve, reject) => {
+    const node = new Image(); node.onload = () => resolve(node); node.onerror = () => reject(new Error('Could not read the image for editing.')); node.src = dataUrl;
+  });
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('This browser could not prepare the image for editing.');
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL('image/jpeg', 0.88);
+}
+
 async function readWorkerReply(response, onChunk, onActivity) {
   lastReplyModel = '';
   if (!response.ok) {
@@ -1949,7 +1963,7 @@ async function readWorkerReply(response, onChunk, onActivity) {
     if (!blob.size) throw new Error('The image response was empty.');
     let prompt = '';
     try { prompt = decodeURIComponent(response.headers.get('x-ultron-image-prompt') || ''); } catch (_) {}
-    return { kind: 'generated-image', blob, prompt };
+    return { kind: 'generated-image', blob, prompt, action: response.headers.get('x-ultron-image-action') || 'generate' };
   }
   if (!response.body || !response.body.getReader) {
     const body = await response.text();
@@ -2331,13 +2345,15 @@ for (const message of thread.messages) {
 }
 if (pendingUserMessage) requestHistory.push(pendingUserMessage);
 const currentUserMessage = thread.messages[thread.messages.length - 1];
+const editIntent = attachments.some(file => file.kind === 'binary' && String(file.mimeType || '').startsWith('image/')) && /\b(edit|change|modify|adjust|retouch|enhance|restore|remove|replace|swap|add|erase|recolor|recolour|colorize|colourize|stylize|restyle|transform|turn|make|convert|fix|clean up|improve|background|cinematic|cartoon|anime|sketch|painting)\b/i.test(prompt);
+const preparedEditImages = editIntent ? await Promise.all(attachments.filter(file => file.kind === 'binary' && String(file.mimeType || '').startsWith('image/')).slice(0, 4).map(async file => ({ type: 'image_url', image_url: { url: await resizeImageDataUrlForEdit(file.dataUrl) } }))) : null;
 replyText = await requestWorkerReply(endpoint, [
 { role: 'system', content: [state.systemPrompt, window.SkillEngineUI.buildSystemMessage(activation)].filter(Boolean).join('\n\n') },
 ...requestHistory.map((m) => {
 const isLatestUser = m === currentUserMessage && m.role === 'user';
 if (!isLatestUser) return { role: m.role, content: m.content };
 const textContent = m.content + (attachments.some(f => f.kind === 'text') ? '\n\n' + attachments.filter(f => f.kind === 'text').map(f => 'FILE: ' + f.name + '\n' + f.content).join('\n\n') : '') + browserContext;
-const binaryParts = attachments.filter(f => f.kind === 'binary').map(f => ({ type: 'image_url', image_url: { url: f.dataUrl } }));
+const binaryParts = isLatestUser && preparedEditImages ? preparedEditImages : attachments.filter(f => f.kind === 'binary').map(f => ({ type: 'image_url', image_url: { url: f.dataUrl } }));
 return { role: m.role, content: binaryParts.length ? [{ type:'text', text:textContent }, ...binaryParts] : textContent };
 })
 ], activeRequest.signal, text => { statusEl.textContent = text; }, partial => {
@@ -2372,7 +2388,7 @@ if (state.activeThreadId === thread.id) renderChat();
 if (replyText && typeof replyText === 'object' && replyText.kind === 'generated-image') {
   generatedImageDataUrl = await imageBlobToDataUrl(replyText.blob);
   generatedImagePrompt = replyText.prompt || retryInput;
-  replyText = 'Generated your image.';
+  replyText = replyText.action === 'edit' ? 'Edited your image.' : 'Generated your image.';
 }
 } else {
 // Built-in offline sandbox: no network request is made.

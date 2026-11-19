@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
@@ -548,6 +548,29 @@ test("e2e: Gemini 503 and an image attachment -> Groq is skipped, reason reporte
 
 
 // --- FLUX image generation --------------------------------------------------
+test("image edit intent: attached images plus edit instructions route to Klein", () => {
+  const image = { type: "image_url", image_url: { url: "data:image/jpeg;base64,AQID" } };
+  assert.equal(W.detectImageEditRequest([{ role: "user", content: [{ type: "text", text: "Make this photo cinematic" }, image] }]).images.length, 1);
+  assert.equal(W.detectImageEditRequest([{ role: "user", content: [{ type: "text", text: "What is in this picture?" }, image] }]), null);
+  assert.equal(W.detectImageEditRequest([{ role: "user", content: "Make this photo cinematic" }]), null);
+});
+
+test("e2e: image edit uses FLUX.2 Klein multipart and returns an edited image", async () => {
+  const t = await e2eSetup({ gemini: () => { throw new Error("Gemini must not run for image editing"); }, groq: () => { throw new Error("Groq must not run for image editing"); } });
+  let called = null;
+  const ai = { run: async (model, options) => { called = { model, options }; return { image: "AQIDBA==" }; } };
+  const messages = [{ role: "user", content: [{ type: "text", text: "Make this photo cinematic" }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,AQID" } }] }];
+  const res = await t.post(t.env({ AI: ai }), messages);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("X-ULTRON-Image-Model"), "flux-2-klein-4b");
+  assert.equal(res.headers.get("X-ULTRON-Image-Action"), "edit");
+  assert.equal(called.model, "@cf/black-forest-labs/flux-2-klein-4b");
+  assert.ok(called.options.multipart.body);
+  assert.match(called.options.multipart.contentType, /multipart\/form-data; boundary=/);
+  assert.equal(t.seen.gemini, 0);
+  assert.equal(t.seen.groq, 0);
+});
+
 test("image intent: explicit create/draw requests are detected, explanations and code are not", () => {
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Create an image of a horse in a misty forest" }]), { prompt: "Create an image of a horse in a misty forest" });
   assert.deepEqual(W.detectImageGenerationRequest([{ role: "user", content: "Draw a cinematic Kerala monsoon wallpaper" }]), { prompt: "Draw a cinematic Kerala monsoon wallpaper" });

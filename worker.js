@@ -254,8 +254,42 @@ export default {
     const geminiBody = buildGeminiBody(input);
     if (!geminiBody.contents.length) return fail(400, "No user or assistant messages were provided.");
 
-    // Explicit image requests use Workers AI directly. Ordinary questions, explanations,
-    // code/artifact requests and image-analysis attachments stay on the chat path.
+    // Image edits use FLUX.2 Klein 4B when the latest user turn includes image
+    // attachments and an editing instruction. Text-only image generation remains Schnell.
+    const imageEditRequest = detectImageEditRequest(input.messages);
+    if (imageEditRequest) {
+      if (!env.AI || typeof env.AI.run !== "function") return fail(503, "Image editing is not configured. Check the Workers AI binding named AI.");
+      try {
+        const form = new FormData();
+        form.append("prompt", imageEditRequest.prompt);
+        form.append("width", "1024");
+        form.append("height", "768");
+        imageEditRequest.images.forEach((image, index) => {
+          form.append("input_image_" + index, new Blob([image.bytes], { type: image.mimeType }), "reference-" + index);
+        });
+        const serialized = new Response(form);
+        const generated = await env.AI.run("@cf/black-forest-labs/flux-2-klein-4b", {
+          multipart: { body: serialized.body, contentType: serialized.headers.get("content-type") },
+        });
+        const encoded = generated && generated.image;
+        if (!encoded) throw new Error("FLUX.2 Klein returned an empty image.");
+        const bytes = typeof encoded === "string"
+          ? Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0))
+          : encoded instanceof ArrayBuffer ? new Uint8Array(encoded)
+          : ArrayBuffer.isView(encoded) ? new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength)
+          : null;
+        if (!bytes || !bytes.byteLength) throw new Error("FLUX.2 Klein returned an unsupported image payload.");
+        return new Response(bytes, {
+          status: 200,
+          headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": "flux-2-klein-4b", "X-ULTRON-Image-Action": "edit", "X-ULTRON-Image-Prompt": encodeURIComponent(imageEditRequest.prompt) },
+        });
+      } catch (error) {
+        console.warn("[ultron] FLUX.2 Klein image edit failed: " + redact(error && error.message || "unknown error").slice(0, 180));
+        return fail(502, "Image editing failed. Check that the image is valid and under the upload limit, then try again.");
+      }
+    }
+
+    // Explicit text-only image requests use the existing FLUX.1 Schnell path.
     const imageRequest = detectImageGenerationRequest(input.messages);
     if (imageRequest) {
       if (!env.AI || typeof env.AI.run !== "function") return fail(503, "Image generation is not configured. Check the Workers AI binding named AI.");
@@ -736,6 +770,29 @@ function detectImageGenerationRequest(messages) {
   const asksForImage = /\b(image|picture|artwork|illustration|wallpaper|poster|drawing|photo|portrait|landscape|logo|icon|thumbnail|banner|graphic|social media post)\b/i.test(text);
   if (!asksToCreate || !asksForImage) return null;
   return { prompt: text.slice(0, 2048) };
+}
+
+function detectImageEditRequest(messages) {
+  if (!Array.isArray(messages)) return null;
+  let latest = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === "user") { latest = messages[i]; break; }
+  }
+  if (!latest || !Array.isArray(latest.content)) return null;
+  const text = textOf(latest.content).replace(/\s+/g, " ").trim();
+  const imageParts = latest.content.filter((item) => item && item.type === "image_url" && item.image_url && typeof item.image_url.url === "string");
+  if (!imageParts.length || !text || text.length < 3) return null;
+  if (!/\b(edit|change|modify|adjust|retouch|enhance|restore|remove|replace|swap|add|erase|recolor|recolour|colorize|colourize|stylize|restyle|transform|turn|make|convert|fix|clean up|improve|background|cinematic|cartoon|anime|sketch|painting)\b/i.test(text)) return null;
+  const images = [];
+  for (const item of imageParts.slice(0, 4)) {
+    const match = item.image_url.url.match(/^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/);
+    if (!match) throw new Error("Image editing supports attached image files only. Reattach the image and try again.");
+    const binary = atob(match[2]);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    if (!bytes.byteLength || bytes.byteLength > 2_000_000) throw new Error("Each image must be under 2 MB after resizing. Reattach it and try again.");
+    images.push({ mimeType: match[1], bytes });
+  }
+  return { prompt: text.slice(0, 2048), images };
 }
 
 function partsOf(content) {
