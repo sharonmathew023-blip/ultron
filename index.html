@@ -1648,12 +1648,31 @@ function retryFailedMessage(messageIndex) {
   handleSend();
 }
 
-let ultronPreviousWaitGame = '';
+const ULTRON_WAIT_GAMES = ['Snake','Pong','Breakout'];
+const ULTRON_WAIT_GAME_KEY = 'ultron_wait_game_shuffle_v1';
+function getNextUltronWaitGame(){
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(ULTRON_WAIT_GAME_KEY) || '{}') || {}; } catch (_) {}
+  let bag = Array.isArray(saved.bag) ? saved.bag.filter(name => ULTRON_WAIT_GAMES.includes(name)) : [];
+  const last = ULTRON_WAIT_GAMES.includes(saved.last) ? saved.last : '';
+  if (!bag.length) {
+    bag = ULTRON_WAIT_GAMES.filter(name => name !== last);
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+  }
+  let game = bag.pop();
+  if (!game || game === last) {
+    const alternatives = ULTRON_WAIT_GAMES.filter(name => name !== last);
+    game = alternatives[Math.floor(Math.random() * alternatives.length)];
+    bag = bag.filter(name => name !== game);
+  }
+  try { localStorage.setItem(ULTRON_WAIT_GAME_KEY, JSON.stringify({ last: game, bag })); } catch (_) {}
+  return game;
+}
 function initUltronSnake(root){
-const games=['Snake','Pong','Breakout'];
-const available=games.filter(name=>name!==ultronPreviousWaitGame);
-const game=available[Math.floor(Math.random()*available.length)];
-ultronPreviousWaitGame=game;
+const game=getNextUltronWaitGame();
 const canvas=root.querySelector('.snake-canvas');if(!canvas)return;
 const ctx=canvas.getContext('2d'),W=300,H=180;
 const title=root.querySelector('.snake-card-head strong');
