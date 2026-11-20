@@ -1648,14 +1648,30 @@ function retryFailedMessage(messageIndex) {
   handleSend();
 }
 
+let ultronPreviousWaitGame = '';
 function initUltronSnake(root){
-const canvas=root.querySelector('.snake-canvas');if(!canvas)return;const ctx=canvas.getContext('2d');const size=15,cols=20,rows=12;let snake=[{x:8,y:6},{x:7,y:6},{x:6,y:6}],dir={x:1,y:0},next={x:1,y:0},food={x:13,y:6},score=0,alive=true,timer=null;
-const scoreEl=root.querySelector('.snake-score');function placeFood(){do{food={x:Math.floor(Math.random()*cols),y:Math.floor(Math.random()*rows)}}while(snake.some(p=>p.x===food.x&&p.y===food.y));}
-function draw(){ctx.clearRect(0,0,300,180);ctx.fillStyle='#171719';ctx.fillRect(0,0,300,180);ctx.strokeStyle='rgba(255,255,255,.045)';for(let x=0;x<=300;x+=size){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,180);ctx.stroke()}for(let y=0;y<=180;y+=size){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(300,y);ctx.stroke()}ctx.fillStyle='#c02b5b';ctx.beginPath();ctx.arc(food.x*size+7.5,food.y*size+7.5,5,0,Math.PI*2);ctx.fill();snake.forEach((p,i)=>{ctx.fillStyle=i?'#b9b9c0':'#f1f1f3';ctx.fillRect(p.x*size+1,p.y*size+1,size-2,size-2)});}
-function tick(){if(!alive)return;dir=next;const head={x:(snake[0].x+dir.x+cols)%cols,y:(snake[0].y+dir.y+rows)%rows};if(snake.some((p,i)=>i>0&&p.x===head.x&&p.y===head.y)){alive=false;ctx.fillStyle='rgba(0,0,0,.58)';ctx.fillRect(0,0,300,180);ctx.fillStyle='#fff';ctx.font='600 16px sans-serif';ctx.textAlign='center';ctx.fillText('Game over · Restart',150,94);return;}snake.unshift(head);if(head.x===food.x&&head.y===food.y){score+=10;scoreEl.textContent='Score: '+score;placeFood()}else snake.pop();draw();}
-function setDir(d){const map={up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right:{x:1,y:0}};const v=map[d];if(v&&!(v.x===-dir.x&&v.y===-dir.y))next=v;}
-function restart(){clearInterval(timer);snake=[{x:8,y:6},{x:7,y:6},{x:6,y:6}];dir=next={x:1,y:0};score=0;alive=true;scoreEl.textContent='Score: 0';placeFood();draw();timer=setInterval(tick,145);}
-root.querySelectorAll('[data-dir]').forEach(b=>b.addEventListener('click',()=>setDir(b.dataset.dir)));root.querySelector('.snake-restart').addEventListener('click',restart);const key=e=>{const map={ArrowUp:'up',w:'up',ArrowDown:'down',s:'down',ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right'};if(map[e.key]){e.preventDefault();setDir(map[e.key]);}};root.addEventListener('pointerdown',()=>root.focus());root.tabIndex=0;root.addEventListener('keydown',key);restart();root.__snakeCleanup=()=>clearInterval(timer);
+const games=['Snake','Pong','Breakout'];
+const available=games.filter(name=>name!==ultronPreviousWaitGame);
+const game=available[Math.floor(Math.random()*available.length)];
+ultronPreviousWaitGame=game;
+const canvas=root.querySelector('.snake-canvas');if(!canvas)return;
+const ctx=canvas.getContext('2d'),W=300,H=180;
+const title=root.querySelector('.snake-card-head strong');
+if(title)title.textContent=game;
+canvas.setAttribute('aria-label',game+' game');
+const scoreEl=root.querySelector('.snake-score'),controls=root.querySelector('.snake-controls');
+let timer=null,score=0,state={},input=()=>{};
+function scoreTo(n){score=n;scoreEl.textContent='Score: '+score}
+function background(){ctx.fillStyle='#171719';ctx.fillRect(0,0,W,H);ctx.strokeStyle='rgba(255,255,255,.045)';for(let x=0;x<=W;x+=15){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}for(let y=0;y<=H;y+=15){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}}
+function setupControls(dirs){controls.innerHTML=dirs.map(d=>'<button type="button" data-dir="'+d+'">'+({up:'↑',down:'↓',left:'←',right:'→'}[d])+'</button>').join('');controls.querySelectorAll('[data-dir]').forEach(btn=>btn.addEventListener('click',()=>input(btn.dataset.dir)))}
+function snakeStart(){setupControls(['up','left','down','right']);state={body:[{x:8,y:6},{x:7,y:6},{x:6,y:6}],dir:{x:1,y:0},next:{x:1,y:0},food:{x:13,y:6}};input=d=>{const v={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[d];if(v&&!(v[0]===-state.dir.x&&v[1]===-state.dir.y))state.next={x:v[0],y:v[1]}};scoreTo(0);timer=setInterval(()=>{state.dir=state.next;const head={x:(state.body[0].x+state.dir.x+20)%20,y:(state.body[0].y+state.dir.y+12)%12};if(state.body.some((p,i)=>i&&p.x===head.x&&p.y===head.y)){state.body=[{x:8,y:6},{x:7,y:6},{x:6,y:6}];state.dir=state.next={x:1,y:0}}state.body.unshift(head);if(head.x===state.food.x&&head.y===state.food.y){scoreTo(score+10);do{state.food={x:Math.random()*20|0,y:Math.random()*12|0}}while(state.body.some(p=>p.x===state.food.x&&p.y===state.food.y))}else state.body.pop();background();ctx.fillStyle='#c02b5b';ctx.beginPath();ctx.arc(state.food.x*15+7.5,state.food.y*15+7.5,5,0,7);ctx.fill();state.body.forEach((p,i)=>{ctx.fillStyle=i?'#b9b9c0':'#f1f1f3';ctx.fillRect(p.x*15+1,p.y*15+1,13,13)})},145)}
+function pongStart(){setupControls(['up','down']);state={x:150,y:90,vx:2.5,vy:1.8,p:90,ai:90};input=d=>state.p=Math.max(20,Math.min(160,state.p+(d==='up'?-20:20)));scoreTo(0);timer=setInterval(()=>{background();state.x+=state.vx;state.y+=state.vy;if(state.y<5||state.y>175)state.vy*=-1;if(state.x<18&&Math.abs(state.y-state.p)<25){state.vx=Math.abs(state.vx);scoreTo(score+1)}if(state.x>282&&Math.abs(state.y-state.ai)<25)state.vx=-Math.abs(state.vx);if(state.x<0||state.x>300){state.x=150;state.y=90;state.vx=state.x<0?2.5:-2.5}state.ai+=(state.y-state.ai)*.045;ctx.fillStyle='#eee';ctx.fillRect(8,state.p-18,5,36);ctx.fillRect(287,state.ai-18,5,36);ctx.beginPath();ctx.arc(state.x,state.y,5,0,7);ctx.fill()},16)}
+function breakoutStart(){setupControls(['left','right']);state={x:150,y:145,vx:2.2,vy:-2.6,p:150,bricks:Array.from({length:18},(_,i)=>({x:9+i%6*48,y:18+Math.floor(i/6)*19,on:true}))};input=d=>state.p=Math.max(24,Math.min(276,state.p+(d==='left'?-22:22)));scoreTo(0);timer=setInterval(()=>{background();ctx.fillStyle='#b9b9c0';state.bricks.forEach(b=>{if(!b.on)return;ctx.fillRect(b.x,b.y,39,10);if(state.x>b.x&&state.x<b.x+39&&state.y>b.y&&state.y<b.y+10){b.on=false;state.vy=Math.abs(state.vy);scoreTo(score+5)}});state.x+=state.vx;state.y+=state.vy;if(state.x<5||state.x>295)state.vx*=-1;if(state.y<5)state.vy=Math.abs(state.vy);if(state.y>158&&state.x>state.p-25&&state.x<state.p+25)state.vy=-Math.abs(state.vy);if(state.y>185){state.x=150;state.y=140;state.vy=-2.6}ctx.fillStyle='#eee';ctx.fillRect(state.p-24,164,48,5);ctx.beginPath();ctx.arc(state.x,state.y,5,0,7);ctx.fill()},16)}
+function restart(){clearInterval(timer);if(game==='Snake')snakeStart();else if(game==='Pong')pongStart();else breakoutStart()}
+const key=e=>{const map={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',w:'up',s:'down',a:'left',d:'right'};if(map[e.key]){e.preventDefault();input(map[e.key])}};
+root.tabIndex=0;root.addEventListener('keydown',key);root.querySelector('.snake-restart').addEventListener('click',restart);
+root.__snakeCleanup=()=>{clearInterval(timer);root.removeEventListener('keydown',key)};
+restart();
 }
 function showFeedbackThanks(){let node=document.getElementById('feedbackThanksToast');if(!node){node=document.createElement('div');node.id='feedbackThanksToast';node.className='feedback-thanks-toast';node.setAttribute('role','status');node.setAttribute('aria-live','polite');document.body.appendChild(node);}node.textContent='Thanks for your feedback!';node.classList.remove('show');void node.offsetWidth;node.classList.add('show');clearTimeout(window.__ultronFeedbackToastTimer);window.__ultronFeedbackToastTimer=setTimeout(()=>node.classList.remove('show'),2200);}
 function regenerateChatImage(messageIndex) {
@@ -1744,7 +1760,7 @@ if (activeRequest && thread) {
     wait = document.createElement('section');
     wait.className = 'ultron-wait-room';
     wait.dataset.threadId = thread.id;
-    wait.innerHTML = '<div class="thinking-line"><span class="thinking-orb"></span><span>ULTRON is thinking</span><span class="thinking-dots"><i></i><i></i><i></i></span></div><div class="snake-card"><div class="snake-card-head"><span>WHILE YOU WAIT</span><strong>Snake</strong></div><canvas class="snake-canvas" width="300" height="180" aria-label="Snake game"></canvas><div class="snake-footer"><span class="snake-score">Score: 0</span><div class="snake-controls"><button type="button" data-dir="up">↑</button><button type="button" data-dir="left">←</button><button type="button" data-dir="down">↓</button><button type="button" data-dir="right">→</button></div><button type="button" class="snake-restart">Restart</button></div></div>';
+    wait.innerHTML = '<div class="thinking-line"><span class="thinking-orb"></span><span>ULTRON is thinking</span><span class="thinking-dots"><i></i><i></i><i></i></span></div><div class="snake-card"><div class="snake-card-head"><span>WHILE YOU WAIT</span><strong>Game</strong></div><canvas class="snake-canvas" width="300" height="180" aria-label="Snake game"></canvas><div class="snake-footer"><span class="snake-score">Score: 0</span><div class="snake-controls"><button type="button" data-dir="up">↑</button><button type="button" data-dir="left">←</button><button type="button" data-dir="down">↓</button><button type="button" data-dir="right">→</button></div><button type="button" class="snake-restart">Restart</button></div></div>';
     initUltronSnake(wait);
   }
   container.appendChild(wait);
