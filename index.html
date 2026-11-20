@@ -2507,10 +2507,11 @@ document.getElementById('sendBtn').addEventListener('click', handleSend);
 
 currentComposerMode = 'chat';
 const promptEl = document.getElementById('promptInput');
+const isDesktopPlatform = /Win|Mac|Linux|CrOS/i.test(navigator.platform) && !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 promptEl.addEventListener('keydown', e => {
   const isEnter = e.key === 'Enter' || e.keyCode === 13 || (e.keyCode === 229 && e.code === 'Enter');
-  if (!isEnter || e.isComposing) return;
-  if (!e.ctrlKey && !e.metaKey) return; // Enter inserts a newline; Ctrl/⌘+Enter sends.
+  if (!isDesktopPlatform || !isEnter || e.isComposing) return;
+  if (e.shiftKey) return; // Shift+Enter keeps the textarea's native newline.
   e.preventDefault();
   handleSend();
 });
