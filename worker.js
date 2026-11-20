@@ -11,7 +11,7 @@
 //   FALLBACK_MODELS  comma-separated backups (default gemini-3.6-flash,
 //                    gemini-flash-lite-latest)
 //   GROQ_API_KEY     optional backup provider, used when every Gemini model is busy
-//   GROQ_MODEL       model for that backup (default llama-3.3-70b-versatile)
+//   GROQ_MODEL       model for that backup (default openai/gpt-oss-120b)
 //   GOOGLE_CLIENT_ID, ULTRON_OWNER_EMAIL, COMPOSIO_API_KEY  sign-in and owner-only routes
 //
 // Routes:
@@ -1062,7 +1062,10 @@ async function callGroqFallback(input, env, timeoutMs = 30_000) {
     messages.push({ role: message.role, content: textOf(message.content) });
   }
   if (!messages.length) return { message: "Groq backup has no compatible text messages." };
-  const model = String(env.GROQ_MODEL || "llama-3.3-70b-versatile").trim();
+  const configuredModel = String(env.GROQ_MODEL || "openai/gpt-oss-120b").trim();
+  // Groq shut down llama-3.3-70b-versatile for developer-tier usage on 2026-08-16.
+  // Normalize the old configured value too, so existing Worker secrets do not keep breaking fallback.
+  const model = configuredModel === "llama-3.3-70b-versatile" ? "openai/gpt-oss-120b" : configuredModel;
   if (!MODEL_RE.test(model)) return { message: "GROQ_MODEL is invalid." };
   const body = { model, messages, stream: true };
   if (typeof input.temperature === "number") body.temperature = input.temperature;
