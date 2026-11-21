@@ -250,7 +250,14 @@ export default {
     const activeMode = applyMode(input);
     applyUltronIdentity(input); // append last so the core identity has final system-prompt priority
 
-    const model = String(input.model || env.DEFAULT_MODEL || DEFAULT_MODEL).replace(/^models\//, "");
+    const requestedModel = String(input.model || "").trim();
+    const route = classifyRequest(input.messages);
+    const automaticModel = route === "fast"
+      ? String(env.FAST_MODEL || "gemini-flash-lite-latest")
+      : route === "reasoning"
+        ? String(env.REASONING_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
+        : String(env.DEFAULT_MODEL || DEFAULT_MODEL);
+    const model = String(requestedModel && requestedModel !== "auto" ? requestedModel : automaticModel).replace(/^models\//, "");
     if (!MODEL_RE.test(model)) return fail(400, "Invalid model name.");
 
     const geminiBody = buildGeminiBody(input);
@@ -337,28 +344,41 @@ export default {
       // callGemini normalizes exhausted regional-routing 400s into a 503 busy
       // error, so those failures also reach this provider fallback.
       if ([429, 500, 502, 503, 504].includes(Number(result.error.status))) {
-        if (!env.GROQ_API_KEY) {
-          console.error("[ultron] Gemini is unavailable and GROQ_API_KEY is not configured.");
-          return fail(503, "Gemini is unavailable and the Groq backup is not configured on this Worker. Add GROQ_API_KEY under the Production environment's Variables and Secrets, then redeploy.");
+        const backupMs = Math.min(22_000, Math.max(4_000, CLIENT_DEADLINE_MS - (Date.now() - chatStarted)));
+        const backupInput = forBackupProvider(input, activeMode);
+        if (env.GROQ_API_KEY) {
+          const backup = await callGroqFallback(backupInput, env, backupMs);
+          if (backup.res) {
+            return new Response(backup.res.body, {
+              headers: {
+                ...cors.headers,
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "X-ULTRON-Model": "groq/" + backup.model,
+                "X-ULTRON-Fallback": "provider",
+                "X-ULTRON-Route": route,
+              },
+            });
+          }
+          console.warn("[ultron] Groq fallback failed: " + redact(backup.message || "unknown error").slice(0, 180));
         }
-        // Groq cannot search, and it only gets what is left of the browser's patience.
-        const backupMs = Math.min(30_000, Math.max(5_000, CLIENT_DEADLINE_MS - (Date.now() - chatStarted)));
-        const backup = await callGroqFallback(forBackupProvider(input, activeMode), env, backupMs);
-        if (backup.res) {
-          return new Response(backup.res.body, {
+        const cloudflare = await callCloudflareFallback(backupInput, env, backupMs);
+        if (cloudflare.text) {
+          return new Response(toStaticOpenAIStream(cloudflare.text, cloudflare.model), {
             headers: {
               ...cors.headers,
               "Content-Type": "text/event-stream; charset=utf-8",
               "Cache-Control": "no-cache, no-transform",
               "X-Accel-Buffering": "no",
-              "X-ULTRON-Model": "groq/" + backup.model,
+              "X-ULTRON-Model": cloudflare.model,
               "X-ULTRON-Fallback": "provider",
+              "X-ULTRON-Route": route,
             },
           });
         }
-        const backupMessage = redact(backup.message || "unknown error").slice(0, 240);
-        console.warn("[ultron] Groq backup failed: " + backupMessage);
-        return fail(502, "Gemini is unavailable and the Groq backup failed: " + backupMessage);
+        console.warn("[ultron] Cloudflare AI fallback failed: " + redact(cloudflare.message || "unknown error").slice(0, 180));
+        return fail(502, "Gemini and Groq are unavailable, and Cloudflare AI could not complete this request.");
       }
       const extra = result.error.retryAfter ? { "Retry-After": result.error.retryAfter } : undefined;
       return fail(result.error.status, result.error.message, extra);
@@ -372,6 +392,7 @@ export default {
         "X-Accel-Buffering": "no",
         "X-ULTRON-Model": result.model,
         "X-ULTRON-Fallback": result.model === chain[0] ? "false" : "true",
+        "X-ULTRON-Route": route,
       },
     });
   },
@@ -845,6 +866,41 @@ function buildGeminiBody(input) {
   if (Number.isInteger(input.max_tokens) && input.max_tokens > 0) cfg.maxOutputTokens = input.max_tokens;
   if (Object.keys(cfg).length) body.generationConfig = cfg;
   return body;
+}
+
+/* ---------- smart routing ---------- */
+function classifyRequest(messages) {
+  const latest = [...(Array.isArray(messages) ? messages : [])].reverse().find((m) => m && m.role === "user");
+  const content = textOf(latest && latest.content).toLowerCase();
+  if (/\b(debug|debugging|code|coding|program|programming|algorithm|architecture|refactor|typescript|javascript|python|sql|regex|api|deploy|compiler|stack trace|reasoning|prove|proof|derive|calculate|multi-step|step by step)\b/.test(content) || content.length > 1800) return "reasoning";
+  if (content.length < 180 && /^(hi|hello|hey|thanks|thank you|ok|okay|bye|good morning|good night|what is|who is|when is|where is)\b/.test(content)) return "fast";
+  if (content.length < 240 && /\b(define|meaning of|convert|how many|simple|quick answer)\b/.test(content)) return "fast";
+  return "general";
+}
+
+async function callCloudflareFallback(input, env, timeoutMs = 18_000) {
+  if (!env.AI || typeof env.AI.run !== "function") return { message: "Cloudflare Workers AI binding is unavailable." };
+  const messages = [];
+  for (const message of (Array.isArray(input.messages) ? input.messages : [])) {
+    if (!message || !["system", "user", "assistant"].includes(message.role)) continue;
+    if (Array.isArray(message.content) && message.content.some((part) => part && part.type === "image_url")) {
+      return { message: "Cloudflare text fallback cannot process image attachments." };
+    }
+    messages.push({ role: message.role, content: textOf(message.content) });
+  }
+  if (!messages.length) return { message: "No compatible text messages for Cloudflare AI." };
+  try {
+    const model = String(env.CLOUDFLARE_AI_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+    const result = await Promise.race([
+      env.AI.run(model, { messages, max_tokens: Number.isInteger(input.max_tokens) ? input.max_tokens : 2048 }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Cloudflare AI timed out.")), timeoutMs)),
+    ]);
+    const text = typeof result === "string" ? result : result && (result.response || result.output_text || result.result);
+    if (typeof text !== "string" || !text.trim()) return { message: "Cloudflare AI returned an empty response." };
+    return { text: text.trim(), model: "cloudflare/" + model };
+  } catch (error) {
+    return { message: error && error.message ? error.message : "Cloudflare AI request failed." };
+  }
 }
 
 /* ---------- model chain ---------- */
