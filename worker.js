@@ -31,7 +31,7 @@ import { applyUltronIdentity } from "./identity.js";
 const DEFAULT_MODEL = "gemini-3.5-flash"; // 3.8-flash answers 503 for days at a time
 const DEFAULT_FALLBACKS = "gemini-3.6-flash,gemini-flash-lite-latest";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;\nconst GROQ_MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const MAX_BODY_BYTES = 12_000_000;
 const MAX_PAGE_BYTES = 2_000_000;
 const MODEL_LIST_CACHE_MS = 300_000;
@@ -378,6 +378,11 @@ export default {
           });
         }
         console.warn("[ultron] Cloudflare AI fallback failed: " + redact(cloudflare.message || "unknown error").slice(0, 180));
+        if (!env.AI || typeof env.AI.run !== "function") {
+          if (!env.GROQ_API_KEY) return fail(503, "Gemini is unavailable and the Groq backup is not configured on this Worker. Add GROQ_API_KEY under the Production environment's Variables and Secrets, then redeploy.");
+          const backupMessage = redact((typeof backup !== "undefined" && backup.message) || cloudflare.message || "unknown error").slice(0, 220);
+          return fail(502, "Gemini is unavailable and the Groq backup failed: " + backupMessage);
+        }
         return fail(502, "Gemini and Groq are unavailable, and Cloudflare AI could not complete this request.");
       }
       const extra = result.error.retryAfter ? { "Retry-After": result.error.retryAfter } : undefined;
@@ -1124,7 +1129,7 @@ async function callGroqFallback(input, env, timeoutMs = 30_000) {
   // Groq shut down llama-3.3-70b-versatile for developer-tier usage on 2026-08-16.
   // Normalize the old configured value too, so existing Worker secrets do not keep breaking fallback.
   const model = configuredModel === "llama-3.3-70b-versatile" ? "openai/gpt-oss-120b" : configuredModel;
-  if (!MODEL_RE.test(model)) return { message: "GROQ_MODEL is invalid." };
+  if (!GROQ_MODEL_RE.test(model) || model.includes("..")) return { message: "GROQ_MODEL is invalid." };
   const body = { model, messages, stream: true };
   if (typeof input.temperature === "number") body.temperature = input.temperature;
   if (typeof input.top_p === "number") body.top_p = input.top_p;
