@@ -1969,7 +1969,8 @@ function imageBlobToDataUrl(blob) {
   });
 }
 
-async function resizeImageDataUrlForEdit(dataUrl, maxSide = 512) {
+// FLUX.2 Klein requires every reference image dimension to be strictly below 512px.
+async function resizeImageDataUrlForEdit(dataUrl, maxSide = 511) {
   const image = await new Promise((resolve, reject) => {
     const node = new Image(); node.onload = () => resolve(node); node.onerror = () => reject(new Error('Could not read the image for editing.')); node.src = dataUrl;
   });
