@@ -938,17 +938,13 @@ svg.ui-icon{width:16px;height:16px;flex:0 0 16px;fill:none;stroke:currentColor;s
 .composer-textarea{grid-column:1 / -1!important;grid-row:1!important;width:100%!important;min-height:40px!important;max-height:160px!important;padding:8px 5px!important}
 .attachment-row{grid-column:1!important;grid-row:2!important;order:0!important;justify-self:start!important}
 .composer-actions{grid-column:2!important;grid-row:2!important;justify-self:end!important;gap:6px!important}
-.voice-input-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--border-hairline);border-radius:12px;background:var(--bg-elevated);color:var(--text-secondary);cursor:pointer}
-.voice-input-btn.listening{color:#e35b73;border-color:rgba(227,91,115,.55);background:rgba(227,91,115,.1);animation:voicePulse 1.2s ease-in-out infinite}
-@keyframes voicePulse{50%{box-shadow:0 0 0 5px rgba(227,91,115,.09)}}
-.voice-input-btn svg{width:17px;height:17px}
 #sendBtn.send-btn{width:38px!important;height:38px!important;min-width:38px!important;min-height:38px!important;border-radius:13px!important;background:#F43F5E!important;color:#fff!important}
 #sendBtn.send-btn:disabled{opacity:.45}
 .web-search-toggle{min-height:36px!important;border-radius:12px!important}
 button:focus-visible,.ultron-tier-trigger:focus-visible{outline:2px solid var(--accent-ink)!important;outline-offset:3px!important}
 @media(max-width:420px){.topbar{padding-left:10px!important;padding-right:10px!important}.topbar-left{gap:6px!important}.ultron-tier-trigger{min-height:40px;padding:5px 8px 5px 10px}.ultron-tier-popover{left:54px;width:min(320px,calc(100vw - 66px))}.ultron-starter-grid{gap:7px!important}.starter-tile{min-height:88px!important;padding:11px!important}.starter-copy strong{font-size:11.5px}.starter-copy small{font-size:9.5px}.composer-wrap{padding-left:10px!important;padding-right:10px!important}}
 @media(max-height:680px) and (max-width:860px){.ultron-starter-grid{margin-top:16px!important}.starter-tile{min-height:76px!important}.hero-mark{margin-bottom:12px!important}.hero-greeting{font-size:1.9rem!important}}
-@media(prefers-reduced-motion:reduce){.voice-input-btn.listening{animation:none!important}.ultron-tier-trigger>svg{transition:none}}
+@media(prefers-reduced-motion:reduce){.ultron-tier-trigger>svg{transition:none}}
 </style>
 
 </head>
@@ -1014,7 +1010,7 @@ button:focus-visible,.ultron-tier-trigger:focus-visible{outline:2px solid var(--
 <div class="attachment-row"><button class="footer-btn attach-btn" type="button" id="attachFilesBtn" aria-label="Attach files" title="Attach files"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><input id="attachmentInput" type="file" multiple accept="image/*,application/pdf,text/*,.md,.csv,.json,.js,.ts,.py,.html,.css,.xml,.yaml,.yml,.log" hidden></div>
 <textarea id="promptInput" class="composer-textarea" rows="1" enterkeyhint="enter" placeholder="Ask ULTRON" aria-label="Message"></textarea>
 <div id="slashCommandMenu" class="slash-command-menu" role="listbox" aria-label="Slash commands" hidden></div><div id="attachmentPreview" class="attachment-preview"></div>
-<div class="composer-actions"><span class="composer-status" id="engineStatus">Engine: Cloudflare Worker Ready</span><button class="voice-input-btn" id="voiceInputBtn" type="button" aria-label="Dictate message" title="Voice input"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button><button class="web-search-toggle" id="webSearchToggle" type="button" aria-pressed="false" title="Use Google Search for this answer"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>Search</button><button class="send-btn" id="sendBtn" type="button" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div>
+<div class="composer-actions"><span class="composer-status" id="engineStatus">Engine: Cloudflare Worker Ready</span><button class="web-search-toggle" id="webSearchToggle" type="button" aria-pressed="false" title="Use Google Search for this answer"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>Search</button><button class="send-btn" id="sendBtn" type="button" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div>
 </div><div class="home-indicator" aria-hidden="true"></div></div>
 </main>
 <aside class="artifact-pane" id="artifactPane">
@@ -1957,39 +1953,6 @@ function extractArtifactFromReply(markdown) {
     prompt.dispatchEvent(new Event("input", { bubbles: true }));
     if (typeof updateComposerAction === "function") updateComposerAction();
   }));
-  const voiceButton = document.getElementById("voiceInputBtn");
-  if (voiceButton && prompt) {
-    let recognition = null;
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    voiceButton.addEventListener("click", () => {
-      if (!SpeechRecognitionAPI) {
-        if (typeof showToast === "function") showToast("Voice input is not supported in this browser.");
-        return;
-      }
-      if (recognition) { recognition.stop(); return; }
-      recognition = new SpeechRecognitionAPI();
-      recognition.lang = "en-IN";
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      const original = prompt.value;
-      voiceButton.classList.add("listening");
-      voiceButton.setAttribute("aria-label","Stop voice input");
-      recognition.onresult = event => {
-        let transcript = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) transcript += event.results[i][0].transcript;
-        prompt.value = [original, transcript].filter(Boolean).join(original ? " " : "");
-        prompt.dispatchEvent(new Event("input", { bubbles: true }));
-      };
-      recognition.onerror = () => { if (typeof showToast === "function") showToast("Voice input stopped. Check microphone permission."); };
-      recognition.onend = () => {
-        recognition = null;
-        voiceButton.classList.remove("listening");
-        voiceButton.setAttribute("aria-label","Dictate message");
-        prompt.focus();
-      };
-      try { recognition.start(); } catch (_) { recognition = null; voiceButton.classList.remove("listening"); }
-    });
-  }
   // Restore the selected tier from persisted model preference without overwriting Offline Sandbox.
   const savedModel = typeof state !== "undefined" ? state.model : "auto";
   if (savedModel === "gemini-4-argon") chooseTier("pro");
