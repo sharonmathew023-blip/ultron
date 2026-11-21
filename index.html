@@ -1904,68 +1904,7 @@ function extractArtifactFromReply(markdown) {
   const js = blocks.filter(block => ['js', 'javascript'].includes(block.language)).map(block => block.code).join('\n\n');
   if (!new RegExp('<html[\\s>]', 'i').test(code)) {
     code = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>' + code + '
-<script id="ultron-redesign-behaviour">
-(() => {
-  const tiers = {
-    one: { name: "ULTRON One", description: "Auto router", model: "auto" },
-    pro: { name: "ULTRON Pro", description: "Deep reasoning", model: "gemini-4-argon" },
-    flash: { name: "ULTRON Flash", description: "Ultra fast", model: "gemini-3.5-flash-lite" }
-  };
-  let activeTier = "one";
-  const trigger = document.getElementById("ultronTierTrigger");
-  const popover = document.getElementById("ultronTierPopover");
-  const closeTierMenu = () => { if (popover) popover.hidden = true; if (trigger) trigger.setAttribute("aria-expanded","false"); };
-  const chooseTier = (key) => {
-    const tier = tiers[key];
-    if (!tier) return;
-    activeTier = key;
-    if (typeof state !== "undefined") { state.model = tier.model; if (typeof saveState === "function") saveState(); }
-    const name = document.getElementById("ultronTierName");
-    const desc = document.getElementById("ultronTierDescription");
-    if (name) name.textContent = tier.name;
-    if (desc) desc.textContent = tier.description;
-    document.querySelectorAll(".tier-option").forEach(button => {
-      const active = button.dataset.tier === key;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    });
-    closeTierMenu();
-    if (typeof showToast === "function") showToast("Switched to " + tier.name);
-  };
-  if (trigger && popover) {
-    trigger.addEventListener("click", () => {
-      const open = popover.hidden;
-      popover.hidden = !open;
-      trigger.setAttribute("aria-expanded", String(open));
-    });
-    document.querySelectorAll(".tier-option").forEach(button => button.addEventListener("click", () => chooseTier(button.dataset.tier)));
-    document.addEventListener("pointerdown", event => {
-      if (!popover.hidden && !popover.contains(event.target) && !trigger.contains(event.target)) closeTierMenu();
-    });
-    document.addEventListener("keydown", event => { if (event.key === "Escape") closeTierMenu(); });
-  }
-  const prompt = document.getElementById("promptInput");
-  document.querySelectorAll(".starter-tile").forEach(button => button.addEventListener("click", () => {
-    if (!prompt) return;
-    prompt.value = button.dataset.prompt || "";
-    if (button.dataset.starter === "research" && !webSearchEnabled) document.getElementById("webSearchToggle")?.click();
-    prompt.focus();
-    prompt.dispatchEvent(new Event("input", { bubbles: true }));
-    if (typeof updateComposerAction === "function") updateComposerAction();
-  }));
-  // Restore the selected tier from persisted model preference without overwriting Offline Sandbox.
-  const savedModel = typeof state !== "undefined" ? state.model : "auto";
-  if (savedModel === "gemini-4-argon") chooseTier("pro");
-  else if (savedModel === "gemini-3.5-flash-lite") chooseTier("flash");
-  else if (savedModel === "auto" || savedModel === "gemini-3.5-flash" || !savedModel) chooseTier("one");
-  // The provider chain is real; do not show invented latency or uptime figures.
-  const readout = document.getElementById("engineReadout");
-  if (readout) {
-    const chain = readout.querySelector(".engine-chain");
-    if (chain) chain.textContent = "Gemini → Groq → Cloudflare AI";
-  }
-})();
-</script>
+
 
 </body></html>';
   }
@@ -2824,6 +2763,68 @@ window.SkillEngineUI.init({
   }
 });
 renderSkillList();
+</script>
+<script id="ultron-redesign-behaviour">
+(() => {
+  const tiers = {
+    one: { name: "ULTRON One", description: "Auto router", model: "auto" },
+    pro: { name: "ULTRON Pro", description: "Deep reasoning", model: "gemini-4-argon" },
+    flash: { name: "ULTRON Flash", description: "Ultra fast", model: "gemini-3.5-flash-lite" }
+  };
+  let activeTier = "one";
+  const trigger = document.getElementById("ultronTierTrigger");
+  const popover = document.getElementById("ultronTierPopover");
+  const closeTierMenu = () => { if (popover) popover.hidden = true; if (trigger) trigger.setAttribute("aria-expanded","false"); };
+  const chooseTier = (key) => {
+    const tier = tiers[key];
+    if (!tier) return;
+    activeTier = key;
+    if (typeof state !== "undefined") { state.model = tier.model; if (typeof saveState === "function") saveState(); }
+    const name = document.getElementById("ultronTierName");
+    const desc = document.getElementById("ultronTierDescription");
+    if (name) name.textContent = tier.name;
+    if (desc) desc.textContent = tier.description;
+    document.querySelectorAll(".tier-option").forEach(button => {
+      const active = button.dataset.tier === key;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    closeTierMenu();
+    if (typeof showToast === "function") showToast("Switched to " + tier.name);
+  };
+  if (trigger && popover) {
+    trigger.addEventListener("click", () => {
+      const open = popover.hidden;
+      popover.hidden = !open;
+      trigger.setAttribute("aria-expanded", String(open));
+    });
+    document.querySelectorAll(".tier-option").forEach(button => button.addEventListener("click", () => chooseTier(button.dataset.tier)));
+    document.addEventListener("pointerdown", event => {
+      if (!popover.hidden && !popover.contains(event.target) && !trigger.contains(event.target)) closeTierMenu();
+    });
+    document.addEventListener("keydown", event => { if (event.key === "Escape") closeTierMenu(); });
+  }
+  const prompt = document.getElementById("promptInput");
+  document.querySelectorAll(".starter-tile").forEach(button => button.addEventListener("click", () => {
+    if (!prompt) return;
+    prompt.value = button.dataset.prompt || "";
+    if (button.dataset.starter === "research" && !webSearchEnabled) document.getElementById("webSearchToggle")?.click();
+    prompt.focus();
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    if (typeof updateComposerAction === "function") updateComposerAction();
+  }));
+  // Restore the selected tier from persisted model preference without overwriting Offline Sandbox.
+  const savedModel = typeof state !== "undefined" ? state.model : "auto";
+  if (savedModel === "gemini-4-argon") chooseTier("pro");
+  else if (savedModel === "gemini-3.5-flash-lite") chooseTier("flash");
+  else if (savedModel === "auto" || savedModel === "gemini-3.5-flash" || !savedModel) chooseTier("one");
+  // The provider chain is real; do not show invented latency or uptime figures.
+  const readout = document.getElementById("engineReadout");
+  if (readout) {
+    const chain = readout.querySelector(".engine-chain");
+    if (chain) chain.textContent = "Gemini → Groq → Cloudflare AI";
+  }
+})();
 </script>
 </body>
 </html>
