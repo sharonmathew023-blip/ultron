@@ -11,6 +11,9 @@ test("core identity is injected once and remains server-owned", () => {
   assert.match(input.messages.at(-1).content, /Sharon Mathew/);
   assert.match(input.messages.at(-1).content, /OpenClaude/);
   assert.match(input.messages.at(-1).content, /Vibecoded it 🫩🥀/);
+  assert.match(ULTRON_IDENTITY_PROMPT, /Claude, ChatGPT, Gemini, and Freebuff/);
+  assert.match(ULTRON_IDENTITY_PROMPT, /substantial, clearly sectioned introduction/i);
+  assert.match(ULTRON_IDENTITY_PROMPT, /Cloudflare KV/);
 });
 
 test("identity composes with server-owned modes and survives Groq backup conversion", () => {
