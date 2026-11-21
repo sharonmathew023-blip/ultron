@@ -31,7 +31,8 @@ import { applyUltronIdentity } from "./identity.js";
 const DEFAULT_MODEL = "gemini-3.5-flash"; // 3.8-flash answers 503 for days at a time
 const DEFAULT_FALLBACKS = "gemini-3.6-flash,gemini-flash-lite-latest";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;\nconst GROQ_MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
+const MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const GROQ_MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const MAX_BODY_BYTES = 12_000_000;
 const MAX_PAGE_BYTES = 2_000_000;
 const MODEL_LIST_CACHE_MS = 300_000;
