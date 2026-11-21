@@ -1994,7 +1994,7 @@ function extractArtifactFromReply(markdown) {
   const savedModel = typeof state !== "undefined" ? state.model : "auto";
   if (savedModel === "gemini-4-argon") chooseTier("pro");
   else if (savedModel === "gemini-3.5-flash-lite") chooseTier("flash");
-  else if (savedModel === "auto" || !savedModel) chooseTier("one");
+  else if (savedModel === "auto" || savedModel === "gemini-3.5-flash" || !savedModel) chooseTier("one");
   // The provider chain is real; do not show invented latency or uptime figures.
   const readout = document.getElementById("engineReadout");
   if (readout) {
