@@ -346,6 +346,7 @@ export default {
       if ([429, 500, 502, 503, 504].includes(Number(result.error.status))) {
         const backupMs = Math.min(22_000, Math.max(4_000, CLIENT_DEADLINE_MS - (Date.now() - chatStarted)));
         const backupInput = forBackupProvider(input, activeMode);
+        let groqFailure = "";
         if (env.GROQ_API_KEY) {
           const backup = await callGroqFallback(backupInput, env, backupMs);
           if (backup.res) {
@@ -361,7 +362,8 @@ export default {
               },
             });
           }
-          console.warn("[ultron] Groq fallback failed: " + redact(backup.message || "unknown error").slice(0, 180));
+          groqFailure = backup.message || "unknown error";
+          console.warn("[ultron] Groq fallback failed: " + redact(groqFailure).slice(0, 180));
         }
         const cloudflare = await callCloudflareFallback(backupInput, env, backupMs);
         if (cloudflare.text) {
@@ -380,7 +382,7 @@ export default {
         console.warn("[ultron] Cloudflare AI fallback failed: " + redact(cloudflare.message || "unknown error").slice(0, 180));
         if (!env.AI || typeof env.AI.run !== "function") {
           if (!env.GROQ_API_KEY) return fail(503, "Gemini is unavailable and the Groq backup is not configured on this Worker. Add GROQ_API_KEY under the Production environment's Variables and Secrets, then redeploy.");
-          const backupMessage = redact((typeof backup !== "undefined" && backup.message) || cloudflare.message || "unknown error").slice(0, 220);
+          const backupMessage = redact(groqFailure || cloudflare.message || "unknown error").slice(0, 220);
           return fail(502, "Gemini is unavailable and the Groq backup failed: " + backupMessage);
         }
         return fail(502, "Gemini and Groq are unavailable, and Cloudflare AI could not complete this request.");
