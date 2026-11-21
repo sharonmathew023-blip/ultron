@@ -396,7 +396,7 @@ test("Groq provider fallback sends compatible text chat and returns its stream",
     messages: [{ role: "system", content: "Be concise" }, { role: "user", content: "Hello" }],
     temperature: 0.4, max_tokens: 120,
   }, { GROQ_API_KEY: "gsk-test", GROQ_MODEL: "llama-3.3-70b-versatile" });
-  assert.equal(result.model, "llama-3.3-70b-versatile");
+  assert.equal(result.model, "openai/gpt-oss-120b");
   assert.ok(result.res && result.res.body);
   assert.equal(captured.headers.Authorization, "Bearer gsk-test");
   assert.deepEqual(captured.body.messages, [
