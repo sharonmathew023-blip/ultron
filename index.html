@@ -1329,6 +1329,7 @@ delete safe.threads;
 delete safe.accessToken; // private Worker tokens must never enter persistent browser storage
 safe.threadStorageVersion = THREAD_DB_VERSION;
 localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(safe));
+scheduleCloudArchiveSync();
 }
 
 function scheduleThreadSave() {
@@ -1385,6 +1386,7 @@ if (target) state.activeThreadId = target.id;
 writeWorkspaceMetadata();
 renderSidebar();
 renderChat();
+void restoreCloudArchive();
 } catch (error) {
 threadStorageReady = false;
 console.warn('OpenClaude is using browser storage because IndexedDB could not start:', error);
@@ -1419,6 +1421,74 @@ async function activateAccountWorkspace() {
   renderChat();
   await initializeThreadStorage();
 }
+let cloudArchiveTimer = null;
+let cloudArchiveSyncing = false;
+function cloudStoreUrl(resource) {
+  const endpoint = normalizeWorkerUrl(state.workerUrl).replace(/\/chat\/completions\/?$/, '');
+  return endpoint + '/' + resource;
+}
+async function cloudStoreRequest(resource, method, payload) {
+  const credential = getGoogleCredential();
+  if (!credential) return null;
+  const response = await fetch(cloudStoreUrl(resource), {
+    method,
+    headers: { Authorization: 'Bearer ' + credential, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
+    body: payload ? JSON.stringify(payload) : undefined
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error?.message || 'Cloud memory sync failed.');
+  return data;
+}
+function makeCloudArchive() {
+  const threads = (Array.isArray(state.threads) ? state.threads : []).slice(-40).map(thread => ({
+    id: String(thread.id || ''),
+    title: String(thread.title || 'Conversation').slice(0, 160),
+    starred: Boolean(thread.starred),
+    updatedAt: Number(thread.updatedAt) || Date.now(),
+    messages: (Array.isArray(thread.messages) ? thread.messages : []).slice(-100).map(message => ({
+      role: message.role,
+      content: typeof message.content === 'string'
+        ? message.content.slice(0, 12000)
+        : Array.isArray(message.content)
+          ? message.content.filter(part => part && typeof part.text === 'string').map(part => part.text.slice(0, 12000)).join('\n')
+          : ''
+    })).filter(message => ['user','assistant'].includes(message.role))
+  }));
+  return { threads };
+}
+function scheduleCloudArchiveSync() {
+  if (!getGoogleCredential() || !activeAccountEmail) return;
+  clearTimeout(cloudArchiveTimer);
+  cloudArchiveTimer = setTimeout(() => { void syncCloudArchive(); }, 1800);
+}
+async function syncCloudArchive() {
+  if (cloudArchiveSyncing || !getGoogleCredential() || !activeAccountEmail) return;
+  cloudArchiveSyncing = true;
+  try { await cloudStoreRequest('conversations', 'PUT', makeCloudArchive()); }
+  catch (error) { console.warn('ULTRON cloud archive sync failed:', error.message); }
+  finally { cloudArchiveSyncing = false; }
+}
+async function restoreCloudArchive() {
+  if (!getGoogleCredential() || !activeAccountEmail) return;
+  try {
+    const data = await cloudStoreRequest('conversations', 'GET');
+    const remote = Array.isArray(data?.conversations?.threads) ? data.conversations.threads : [];
+    if (!remote.length || activeAccountEmail !== (googleAccountEmail || '').trim().toLowerCase()) return;
+    const localIds = new Set((state.threads || []).map(thread => thread.id));
+    const restored = remote.filter(thread => thread && thread.id && !localIds.has(thread.id));
+    if (!restored.length) return;
+    state.threads = [...state.threads, ...restored].slice(-40);
+    if (!state.activeThreadId || !state.threads.some(thread => thread.id === state.activeThreadId)) state.activeThreadId = state.threads.at(-1)?.id || null;
+    if (threadStorageReady && threadDatabase) await writeThreadSnapshot(threadDatabase, state.threads);
+    writeWorkspaceMetadata();
+    renderSidebar();
+    renderChat();
+    showToast('Synced saved conversations');
+  } catch (error) {
+    console.warn('ULTRON cloud archive restore failed:', error.message);
+  }
+}
+
 function saveState() {
 if (!activeStorageKey) return;
 if (threadStorageReady) {
@@ -1432,6 +1502,7 @@ delete safe.accessToken; // keep the owner token in memory only; never persist i
 // keep ordinary chat history in localStorage but omit image bytes to avoid quota failures.
 if (Array.isArray(safe.threads)) safe.threads = safe.threads.map(thread => ({ ...thread, messages: (thread.messages || []).map(message => { const copy = { ...message }; delete copy.imageDataUrl; return copy; }) }));
 localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(safe));
+scheduleCloudArchiveSync();
 } catch (error) { console.warn('OpenClaude could not save local settings:', error); }
 }
 let selectedAttachments = [];
