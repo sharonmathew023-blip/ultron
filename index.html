@@ -1010,7 +1010,7 @@ button:focus-visible,.ultron-tier-trigger:focus-visible{outline:2px solid var(--
 <div class="attachment-row"><button class="footer-btn attach-btn" type="button" id="attachFilesBtn" aria-label="Attach files" title="Attach files"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><input id="attachmentInput" type="file" multiple accept="image/*,application/pdf,text/*,.md,.csv,.json,.js,.ts,.py,.html,.css,.xml,.yaml,.yml,.log" hidden></div>
 <textarea id="promptInput" class="composer-textarea" rows="1" enterkeyhint="enter" placeholder="Ask ULTRON" aria-label="Message"></textarea>
 <div id="slashCommandMenu" class="slash-command-menu" role="listbox" aria-label="Slash commands" hidden></div><div id="attachmentPreview" class="attachment-preview"></div>
-<div class="composer-actions"><span class="composer-status" id="engineStatus">Engine: Cloudflare Worker Ready</span><button class="web-search-toggle" id="webSearchToggle" type="button" aria-pressed="false" title="Use Google Search for this answer"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>Search</button><button class="send-btn" id="sendBtn" type="button" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div>
+<div class="composer-actions"><span class="composer-status" id="engineStatus">Engine: Cloudflare Worker Ready</span><button class="web-search-toggle" id="webSearchToggle" type="button" aria-pressed="false" title="Research: use Google Search for current information"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>Search</button><button class="send-btn" id="sendBtn" type="button" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div>
 </div><div class="home-indicator" aria-hidden="true"></div></div>
 </main>
 <aside class="artifact-pane" id="artifactPane">
@@ -2131,15 +2131,15 @@ function friendlyHttpMessage(status, detail) {
 const d = detail ? ` Details: ${String(detail).slice(0, 300)}` : '';
 if (status === 400 && /api key/i.test(detail || '')) return 'Gemini rejected the API key. Check the GEMINI_API_KEY secret on your Worker.';
 switch (status) {
-case 400: return `The request was rejected (400).${d}`;
+case 400: return 'The request was rejected. Check your message or attachment and try again.';
 case 401: return 'Your Google sign-in is missing or expired. Sign in again and retry.';
-case 403: return `Access was refused (403). Check the Worker secrets and allowed sites.${d}`;
-case 404: return `Model or route not found (404). Check the Worker URL and the model name.${d}`;
+case 403: return 'Sign in as owner to use app tools.';
+case 404: return 'That service route is unavailable. Try again later.';
 case 413: return 'This conversation is too long for one request. Start a new chat.';
-case 422: return detail || 'Gemini could not answer this. Try rephrasing your message.';
-case 429: return `Gemini hit a rate limit or quota (429). Wait a minute, then try again.${d}`;
-case 500: case 502: return `Gemini had a server error (${status}).${d}`;
-case 503: return `Gemini is overloaded right now (503). This is usually temporary.${d}`;
+case 422: return 'ULTRON could not process that request. Try rephrasing your message.';
+case 429: return 'ULTRON is receiving too many requests right now. Wait a moment and try again.';
+case 500: case 502: return 'ULTRON had a temporary server problem. Please retry in a moment.';
+case 503: return 'ULTRON is temporarily unavailable. Please retry in a moment.';
 case 504: return `Gemini took too long to answer (504).${d}`;
 default: return `The server returned HTTP ${status}.${d}`;
 }
