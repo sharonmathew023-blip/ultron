@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest, userStoreKey, validateUserMemory, validateConversationArchive };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
@@ -611,4 +611,23 @@ test("e2e: ordinary text chat stays on Gemini even when Workers AI is available"
   assert.match(await res.text(), /normal chat response/);
   assert.equal(aiCalls, 0);
   assert.equal(t.seen.gemini, 1);
+});
+
+test("user memory is scoped by immutable Google subject", () => {
+  assert.notEqual(W.userStoreKey("google-user-a", "memory"), W.userStoreKey("google-user-b", "memory"));
+  assert.match(W.userStoreKey("google-user-a", "memory"), /user:v1:google-user-a:memory$/);
+  assert.throws(() => W.userStoreKey("../bad", "memory"));
+});
+test("memory validator accepts bounded facts and rejects malformed or excessive data", () => {
+  const good = W.validateUserMemory({ facts: [{ text: "I prefer concise answers." }] });
+  assert.equal(good.ok, true);
+  assert.equal(good.value.facts.length, 1);
+  assert.equal(W.validateUserMemory({ facts: Array.from({ length: 101 }, () => ({ text: "fact" })) }).ok, false);
+  assert.equal(W.validateUserMemory({ facts: [{ text: "x".repeat(501) }] }).ok, false);
+});
+test("conversation archive validator strips non-text attachment payloads and enforces limits", () => {
+  const good = W.validateConversationArchive({ threads: [{ id: "t1", title: "Chat", messages: [{ role: "user", content: [{ text: "hello" }, { image_url: { url: "data:image/png;base64,SECRET" } }] }] }] });
+  assert.equal(good.ok, true);
+  assert.equal(good.value.threads[0].messages[0].content, "hello");
+  assert.equal(W.validateConversationArchive({ threads: Array.from({ length: 41 }, () => ({ id: "x", messages: [] })) }).ok, false);
 });
