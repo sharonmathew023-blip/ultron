@@ -125,6 +125,43 @@ export default {
       return reply({ connectedAppsAvailable: isUltronOwner(auth.identity, env) });
     }
 
+    // Per-account persistent archive and compact memory. Google subject IDs,
+    // never client-supplied email addresses, define the KV namespace.
+    if (path === "/conversations" || path === "/memory") {
+      const auth = await authenticateGoogleRequest(request, env);
+      if (!auth.identity) return fail(auth.status, auth.message);
+      if (!env.ULTRON_STATE || typeof env.ULTRON_STATE.get !== "function" || typeof env.ULTRON_STATE.put !== "function") {
+        return fail(503, "Persistent storage is not configured. Ask the site owner to check the ULTRON_STATE KV binding.");
+      }
+      const kind = path === "/conversations" ? "conversations" : "memory";
+      const key = userStoreKey(auth.identity.sub, kind);
+      if (request.method === "GET") {
+        try {
+          const stored = await env.ULTRON_STATE.get(key, "json");
+          return reply({ ok: true, [kind]: stored || (kind === "conversations" ? { threads: [] } : { facts: [] }) });
+        } catch {
+          return fail(503, "Could not load your saved data. Please try again.");
+        }
+      }
+      if (request.method !== "PUT") return fail(405, "Use GET or PUT for this resource.", { Allow: "GET, PUT, OPTIONS" });
+      let payload;
+      try {
+        const raw = await readStreamTextLimited(request.body, kind === "conversations" ? 128_000 : 16_000);
+        payload = JSON.parse(raw || "{}");
+      } catch (error) {
+        return fail(error && error.code === "PAYLOAD_TOO_LARGE" ? 413 : 400,
+          error && error.code === "PAYLOAD_TOO_LARGE" ? "Your saved data is too large to sync." : "Saved data must be valid JSON.");
+      }
+      const checked = kind === "conversations" ? validateConversationArchive(payload) : validateUserMemory(payload);
+      if (!checked.ok) return fail(400, checked.message);
+      try {
+        await env.ULTRON_STATE.put(key, JSON.stringify(checked.value));
+        return reply({ ok: true, saved: true, updatedAt: checked.value.updatedAt });
+      } catch {
+        return fail(503, "Could not save your data right now. Your local copy is still available.");
+      }
+    }
+
     // Composio Connect consumer MCP. The ck_* key stays server-side and is
     // sent only to connect.composio.dev using x-consumer-api-key.
     if (path.startsWith("/composio/")) {
@@ -1302,6 +1339,64 @@ function toOpenAIStream(upstreamBody, model) {
       ctl.enqueue(enc.encode("data: [DONE]\n\n"));
     },
   }));
+}
+
+// KV keys are scoped to Google's verified immutable subject, not an email supplied by the browser.
+function userStoreKey(subject, kind) {
+  const id = String(subject || "").trim();
+  if (!id || id.length > 255 || !/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Invalid Google account subject.");
+  if (!["memory", "conversations"].includes(kind)) throw new Error("Invalid user store.");
+  return "user:v1:" + id + ":" + kind;
+}
+
+function validateUserMemory(input) {
+  if (!input || typeof input !== "object" || !Array.isArray(input.facts) || input.facts.length > 100) {
+    return { ok: false, message: "Memory must contain a facts array with no more than 100 items." };
+  }
+  const facts = [];
+  for (const item of input.facts) {
+    if (!item || typeof item.text !== "string") return { ok: false, message: "Each memory fact must contain text." };
+    const text = item.text.trim();
+    if (!text || text.length > 500) return { ok: false, message: "Memory facts must contain 1 to 500 characters." };
+    facts.push({
+      id: String(item.id || crypto.randomUUID()).slice(0, 80),
+      text,
+      category: String(item.category || "preference").slice(0, 32),
+      updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now(),
+    });
+  }
+  return { ok: true, value: { facts, updatedAt: Date.now() } };
+}
+
+function validateConversationArchive(input) {
+  if (!input || typeof input !== "object" || !Array.isArray(input.threads) || input.threads.length > 40) {
+    return { ok: false, message: "Conversation archive must contain no more than 40 threads." };
+  }
+  const threads = [];
+  for (const thread of input.threads) {
+    if (!thread || typeof thread.id !== "string" || !Array.isArray(thread.messages) || thread.messages.length > 100) {
+      return { ok: false, message: "Each saved conversation must have an ID and no more than 100 messages." };
+    }
+    const messages = [];
+    for (const message of thread.messages) {
+      if (!message || !["user", "assistant"].includes(message.role)) continue;
+      let content = typeof message.content === "string" ? message.content : "";
+      if (Array.isArray(message.content)) {
+        content = message.content.filter(part => part && typeof part.text === "string").map(part => part.text).join("\n");
+      }
+      messages.push({ role: message.role, content: content.slice(0, 12_000) });
+    }
+    threads.push({
+      id: thread.id.slice(0, 100),
+      title: String(thread.title || "Conversation").slice(0, 160),
+      starred: Boolean(thread.starred),
+      updatedAt: Number.isFinite(Number(thread.updatedAt)) ? Number(thread.updatedAt) : Date.now(),
+      messages,
+    });
+  }
+  const value = { threads, updatedAt: Date.now() };
+  if (JSON.stringify(value).length > 120_000) return { ok: false, message: "Conversation archive is too large. Remove older messages and try again." };
+  return { ok: true, value };
 }
 
 /* ---------- Google account authorization ---------- */
