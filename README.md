@@ -7,12 +7,14 @@ A browser-based AI workspace with a responsive chat interface, conversation hist
 ## Features
 
 - Responsive chat interface for desktop and mobile.
-- Conversation creation, search, deletion, and browser-local history.
+- Conversation creation, search, deletion, and browser-local history with signed-in KV archive sync.
 - Dark and light themes.
 - Streaming AI responses through an OpenAI-compatible Worker endpoint.
 - Google sign-in verified by the Worker.
 - Per-account and per-IP rate limiting.
-- Model fallback and cooldown handling.
+- Model fallback, bounded retries, and KV-backed cooldown handling.
+- Per-account persistent conversation archives and explicit preference memory (`/memory`, `/forget-memory`).
+- Research-mode Google Search grounding with clickable source links.
 - Built-in and imported skills with validation.
 - Owner-gated connected-app integrations.
 - Sandboxed HTML artifact preview, code view, and download.
@@ -24,7 +26,7 @@ A browser-based AI workspace with a responsive chat interface, conversation hist
 | --- | --- |
 | `index.html`, `styles.css` | Application interface |
 | `skill-rules.js`, `skill-engine.js`, `builtin-skills.js` | Skill parsing, validation, activation, and UI |
-| `worker.js` | API, authentication, rate limiting, AI streaming, fallback, and owner-only integrations |
+| `worker.js` | API, authentication, rate limiting, AI streaming, fallback, per-user KV memory/archive, telemetry, and owner-only integrations |
 | `wrangler.toml` | Cloudflare Worker configuration |
 | `worker.test.mjs`, `tests/` | Automated tests |
 
@@ -68,8 +70,9 @@ Configure rate-limiter bindings and the optional `ULTRON_STATE` KV namespace as 
 
 ## Known limitations
 
-- Conversation history is stored in the current browser and does not automatically sync across devices.
-- Clearing browser site data removes local conversations.
+- Cloud archive sync requires a valid Google sign-in and the `ULTRON_STATE` KV binding. The browser keeps a local copy if cloud sync is unavailable.
+- Cloud conversation archives are text-only; binary attachments and generated image bytes remain local.
+- Memory v1 stores explicit low-risk preference statements only. Use `/memory` to inspect and `/forget-memory [phrase]` to delete matching facts; `/forget-memory` alone clears all saved facts.
 - Demo mode is a UI preview, not an offline AI model.
 - Available models depend on the configured provider account and Worker settings.
 
