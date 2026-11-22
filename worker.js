@@ -706,10 +706,13 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
   return { text: finalText, model };
 }
 async function callGeminiJson(chain, body, apiKey, health) {
+  let totalAttempts = 0;
   let last = { status: 502, message: "Could not reach Gemini." };
   await health.load();
   for (const model of health.order(chain)) {
     for (let attempt = 1; attempt <= 2; attempt++) {
+      if (totalAttempts >= MAX_TOTAL_GEMINI_ATTEMPTS) return { error: last };
+      totalAttempts++;
       try {
         const response = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
           method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
