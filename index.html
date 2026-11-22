@@ -2442,7 +2442,7 @@ if (prompt === '/memory') {
   input.value = ''; updateComposerAction(); return;
 }
 if (prompt.startsWith('/forget-memory')) {
-  const phrase = prompt.replace(/^\\/forget-memory\\s*/i, '').trim().toLowerCase();
+  const phrase = prompt.replace(/^\/forget-memory\s*/i, '').trim().toLowerCase();
   const next = phrase ? userMemoryFacts.filter(fact => !String(fact.text || '').toLowerCase().includes(phrase)) : [];
   try {
     await cloudStoreRequest('memory', 'PUT', { facts: next });
