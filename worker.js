@@ -41,6 +41,7 @@ const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const MODEL_GONE_STATUS = 404; // retired model: move on to the next one, do not retry it
 const HEADERS_TIMEOUT_MS = 20_000; // wait for the first response headers, not for the whole stream
 const ATTEMPTS_PER_MODEL = 3; // first try plus two retries, with exponential backoff between them
+const MAX_TOTAL_GEMINI_ATTEMPTS = 9; // hard cap across the entire model chain
 const MIN_ATTEMPT_MS = 2_000; // do not start an attempt with less budget than this
 const BACKOFF_BASE_MS = 400; // wait ~400ms, ~800ms, ~1.6s ... (jittered) between retries of one model
 const BACKOFF_MAX_MS = 3_000;
@@ -376,8 +377,10 @@ export default {
 
     const chain = buildModelChain(model, env);
     const chatStarted = Date.now();
+    logWorkerEvent("chat.started", { route, modelCount: chain.length });
     const result = await callGemini(chain, JSON.stringify(geminiBody), env.GEMINI_API_KEY, makeHealth(env, ctx));
     if (result.error) {
+      logWorkerEvent("chat.gemini_failed", { route, status: Number(result.error.status) || 502, latencyMs: Date.now() - chatStarted });
       // Use the independent provider only for upstream availability failures.
       // callGemini normalizes exhausted regional-routing 400s into a 503 busy
       // error, so those failures also reach this provider fallback.
@@ -388,6 +391,7 @@ export default {
         if (env.GROQ_API_KEY) {
           const backup = await callGroqFallback(backupInput, env, backupMs);
           if (backup.res) {
+            logWorkerEvent("chat.completed", { route, provider: "groq", model: backup.model, latencyMs: Date.now() - chatStarted, fallback: true });
             return new Response(backup.res.body, {
               headers: {
                 ...cors.headers,
@@ -405,6 +409,7 @@ export default {
         }
         const cloudflare = await callCloudflareFallback(backupInput, env, backupMs);
         if (cloudflare.text) {
+          logWorkerEvent("chat.completed", { route, provider: "cloudflare-ai", model: cloudflare.model, latencyMs: Date.now() - chatStarted, fallback: true });
           return new Response(toStaticOpenAIStream(cloudflare.text, cloudflare.model), {
             headers: {
               ...cors.headers,
@@ -429,6 +434,7 @@ export default {
       return fail(result.error.status, result.error.message, extra);
     }
 
+    logWorkerEvent("chat.completed", { route, provider: "gemini", model: result.model, latencyMs: Date.now() - chatStarted, fallback: result.model !== chain[0] });
     return new Response(toOpenAIStream(result.res.body, result.model), {
       headers: {
         ...cors.headers,
@@ -1192,6 +1198,7 @@ async function callGroqFallback(input, env, timeoutMs = 30_000) {
 async function callGemini(chain, body, apiKey, health) {
   const started = Date.now();
   const tried = [];
+  let totalAttempts = 0;
   let last = { status: 502, message: "Could not reach the Gemini API." };
   await health.load();
 
@@ -1200,6 +1207,8 @@ async function callGemini(chain, body, apiKey, health) {
     // A model that is resting gets one quick try as a last resort, not a full set of retries.
     const attempts = health.isResting(model) ? 1 : ATTEMPTS_PER_MODEL;
     for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (totalAttempts >= MAX_TOTAL_GEMINI_ATTEMPTS) return { error: busyError(tried, last) };
+      totalAttempts++;
       const left = TOTAL_BUDGET_MS - (Date.now() - started);
       if (left < MIN_ATTEMPT_MS) return { error: busyError(tried, last) };
 
@@ -1516,6 +1525,11 @@ function corsFor(request, env) {
     return { headers, allowed: true };
   }
   return { headers, allowed: !origin }; // non-browser requests still require the bearer token on private routes
+}
+
+function logWorkerEvent(event, fields = {}) {
+  const safe = { service: "ultron", event, at: new Date().toISOString(), ...fields };
+  console.log(JSON.stringify(safe));
 }
 
 function errorType(status) {
