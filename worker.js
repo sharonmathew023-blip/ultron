@@ -76,7 +76,7 @@ export default {
     if (request.method === "POST" && path === "/browse") {
       const auth = await authenticateGoogleRequest(request, env);
       if (!auth.identity) return fail(auth.status, auth.message);
-      if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Website inspection is restricted to the ULTRON owner account." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
+      if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Sign in as owner to use app tools." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
       try {
         let input = {};
         try {
@@ -130,7 +130,7 @@ export default {
     if (path.startsWith("/composio/")) {
       const auth = await authenticateGoogleRequest(request, env);
       if (!auth.identity) return fail(auth.status, auth.message);
-      if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Connected apps are restricted to the ULTRON owner account." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
+      if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Sign in as owner to use app tools." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
       if (!env.COMPOSIO_API_KEY) return fail(503, "Missing COMPOSIO_API_KEY Worker secret. Add your Composio Consumer API key in Cloudflare and deploy.");
 
       try {
