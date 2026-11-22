@@ -631,3 +631,33 @@ test("conversation archive validator strips non-text attachment payloads and enf
   assert.equal(good.value.threads[0].messages[0].content, "hello");
   assert.equal(W.validateConversationArchive({ threads: Array.from({ length: 41 }, () => ({ id: "x", messages: [] })) }).ok, false);
 });
+
+test("total Gemini attempts are capped across a long model chain", async () => {
+  const models = Array.from({ length: 20 }, (_, index) => "model-" + index);
+  const failures = Object.fromEntries(models.map(model => [model, httpError(503, "busy")]));
+  install(failures);
+  const result = await W.callGemini(models, "{}", FAKE_KEY, W.makeHealth({}, undefined));
+  assert.ok(result.error);
+  assert.equal(calls.length, 9, "the request must stop after the global attempt budget");
+  assert.equal(new Set(calls).size, 3, "the cap still allows fallback across the first three models");
+});
+
+test("Google Search grounding metadata is emitted as clickable source citations", async () => {
+  const payload = {
+    candidates: [{
+      content: { parts: [{ text: "A grounded answer." }] },
+      groundingMetadata: {
+        groundingChunks: [
+          { web: { uri: "https://example.com/report", title: "Example Report" } },
+          { web: { uri: "http://insecure.example/path", title: "Ignored HTTP source" } }
+        ]
+      }
+    }]
+  };
+  const upstream = new Response("data: " + JSON.stringify(payload) + "\n\n");
+  const stream = W.toOpenAIStream(upstream.body, "gemini-test");
+  const output = await new Response(stream).text();
+  assert.match(output, /A grounded answer\./);
+  assert.match(output, /\[Example Report\]\(https:\/\/example\.com\/report\)/);
+  assert.doesNotMatch(output, /Ignored HTTP source/);
+});
