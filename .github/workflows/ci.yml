@@ -18,6 +18,8 @@ jobs:
           node-version: 22
       - name: Check Worker syntax
         run: node --check worker.js
+      - name: Check request runtime syntax
+        run: node --check worker-runtime.js
       - name: Check inline browser scripts
         run: node tests/inline-scripts.test.mjs
       - name: Run skill engine tests
@@ -34,3 +36,7 @@ jobs:
         run: node --test tests/client-timeout.test.mjs
       - name: Run identity regression tests
         run: node --test identity.test.mjs
+      - name: Run deadline and observability regression tests
+        run: node --test tests/worker-deadline-observability.test.mjs
+      - name: Check offline latency benchmark syntax
+        run: node --check tests/latency-benchmark.mjs

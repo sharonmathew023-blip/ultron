@@ -27,6 +27,7 @@
 import "./skill-rules.js";
 import { applyMode, forBackupProvider } from "./modes.js";
 import { applyUltronIdentity } from "./identity.js";
+import { createRequestRuntime, createAttempt, wrapResponseStream, isRequestDeadlineError, DEADLINE_MESSAGE } from "./worker-runtime.js";
 
 const DEFAULT_MODEL = "gemini-3.5-flash"; // 3.8-flash answers 503 for days at a time
 const DEFAULT_FALLBACKS = "gemini-3.6-flash,gemini-flash-lite-latest";
@@ -53,7 +54,7 @@ const COOLDOWN_KV_KEY = "model-cooldowns:v1";
 let modelListCache = { expiresAt: 0, data: null };
 const COOLDOWN_CACHE_MS = 3_000; // re-read the KV copy at most this often
 const TOTAL_BUDGET_MS = 45_000; // Gemini gets at most this long
-const CLIENT_DEADLINE_MS = 55_000; // the browser gives up after 60s with no data, so Gemini plus Groq must fit in this
+const CLIENT_DEADLINE_MS = 55_000; // one request deadline, including auth, tools, fallbacks and streaming
 // Skills may only narrow the Worker's read-only tool access. Nothing in a
 // request can widen these grants, and write tools never exist here.
 const GRANTABLE_SKILL_TOOLS = new Set(["web.read", "github.read"]);
@@ -61,8 +62,8 @@ const BASELINE_SKILL_TOOLS = ["web.read", "github.read"];
 const SKILL_MARKER = "<<<SKILL";
 const MAX_SKILLS_PER_REQUEST = 8;
 
-export default {
-  async fetch(request, env, ctx) {
+const workerHandler = {
+  async fetch(request, env, ctx, runtime) {
     const url = new URL(request.url);
     const cors = corsFor(request, env);
     const reply = (data, status = 200, extra) => jsonResponse(data, status, cors.headers, extra);
@@ -75,7 +76,7 @@ export default {
 
     // Public-page reader used by browser-oriented custom skills.
     if (request.method === "POST" && path === "/browse") {
-      const auth = await authenticateGoogleRequest(request, env);
+      const auth = await authenticateGoogleRequest(request, env, runtime);
       if (!auth.identity) return fail(auth.status, auth.message);
       if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Sign in as owner to use app tools." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
       try {
@@ -84,6 +85,7 @@ export default {
           const rawInput = await readStreamTextLimited(request.body, 16_384);
           if (rawInput) input = JSON.parse(rawInput);
         } catch (error) {
+          runtime?.check();
           if (error && error.code === "PAYLOAD_TOO_LARGE") return fail(413, "Website inspection request is too large.");
           return fail(400, "Website inspection request must be valid JSON.");
         }
@@ -92,10 +94,11 @@ export default {
         if (target.protocol !== "https:" || !isPublicWebHost(target.hostname)) return fail(400, "Only public HTTPS websites can be opened.");
         let response;
         for (let hop = 0; hop < 4; hop++) {
+          runtime?.check();
           response = await fetch(target.toString(), {
             redirect: "manual",
             headers: { "User-Agent": "OpenClaude-PageReader/1.0", "Accept": "text/html,text/plain;q=0.9" },
-            signal: AbortSignal.timeout(12000)
+            signal: runtime ? AbortSignal.any([runtime.signal, AbortSignal.timeout(Math.max(0, Math.floor(Math.min(12000, runtime.remaining()))))]) : AbortSignal.timeout(12000)
           });
           if (![301,302,303,307,308].includes(response.status)) break;
           const location = response.headers.get("Location");
@@ -115,13 +118,14 @@ export default {
         const page = extractPageText(source, type);
         return reply({ ok: true, url: target.toString(), title: page.title, content: page.content.slice(0, 18000), html: page.html.slice(0, 30000) });
       } catch (error) {
+        runtime?.check();
         return fail(502, error.message || "Website inspection failed.");
       }
     }
 
     // Return the signed-in account connector entitlement without exposing the configured owner email.
     if (request.method === "GET" && path === "/account/access") {
-      const auth = await authenticateGoogleRequest(request, env);
+      const auth = await authenticateGoogleRequest(request, env, runtime);
       if (!auth.identity) return fail(auth.status, auth.message);
       return reply({ connectedAppsAvailable: isUltronOwner(auth.identity, env) });
     }
@@ -129,7 +133,7 @@ export default {
     // Per-account persistent archive and compact memory. Google subject IDs,
     // never client-supplied email addresses, define the KV namespace.
     if (path === "/conversations" || path === "/memory") {
-      const auth = await authenticateGoogleRequest(request, env);
+      const auth = await authenticateGoogleRequest(request, env, runtime);
       if (!auth.identity) return fail(auth.status, auth.message);
       if (!env.ULTRON_STATE || typeof env.ULTRON_STATE.get !== "function" || typeof env.ULTRON_STATE.put !== "function") {
         return fail(503, "Persistent storage is not configured. Ask the site owner to check the ULTRON_STATE KV binding.");
@@ -150,6 +154,7 @@ export default {
         const raw = await readStreamTextLimited(request.body, kind === "conversations" ? 128_000 : 16_000);
         payload = JSON.parse(raw || "{}");
       } catch (error) {
+        runtime?.check();
         return fail(error && error.code === "PAYLOAD_TOO_LARGE" ? 413 : 400,
           error && error.code === "PAYLOAD_TOO_LARGE" ? "Your saved data is too large to sync." : "Saved data must be valid JSON.");
       }
@@ -166,13 +171,13 @@ export default {
     // Composio Connect consumer MCP. The ck_* key stays server-side and is
     // sent only to connect.composio.dev using x-consumer-api-key.
     if (path.startsWith("/composio/")) {
-      const auth = await authenticateGoogleRequest(request, env);
+      const auth = await authenticateGoogleRequest(request, env, runtime);
       if (!auth.identity) return fail(auth.status, auth.message);
       if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Sign in as owner to use app tools." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
       if (!env.COMPOSIO_API_KEY) return fail(503, "Missing COMPOSIO_API_KEY Worker secret. Add your Composio Consumer API key in Cloudflare and deploy.");
 
       try {
-        const mcp = await createComposioMcpClient(env.COMPOSIO_API_KEY);
+        const mcp = await createComposioMcpClient(env.COMPOSIO_API_KEY, runtime);
         if (request.method === "POST" && path === "/composio/session") {
           const tools = await mcp.listTools();
           const required = ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS", "COMPOSIO_MULTI_EXECUTE_TOOL", "COMPOSIO_MANAGE_CONNECTIONS"];
@@ -199,8 +204,10 @@ export default {
           const status = await mcp.callTool("COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [toolkit], reinitiate_all: false });
           return reply({ ok: true, data: status });
         }
+        runtime.unknownRoute();
         return fail(404, "Unknown Composio route.");
       } catch (error) {
+        runtime?.check();
         return fail(502, error.message || "Composio MCP request failed.");
       }
     }
@@ -232,6 +239,7 @@ export default {
     }
 
     if (request.method !== "POST" || !path.endsWith("/chat/completions")) {
+      runtime.unknownRoute();
       return fail(404, "OpenClaude Gemini proxy is running. Use POST /chat/completions.");
     }
     // Public chat endpoint: require a verified Google Identity Services ID token.
@@ -241,7 +249,7 @@ export default {
     if (!googleToken) return fail(401, "Sign in with Google to use ULTRON.");
     let googleIdentity;
     try {
-      googleIdentity = await verifyGoogleIdToken(googleToken, env.GOOGLE_CLIENT_ID);
+      googleIdentity = await runtime.wait(() => verifyGoogleIdToken(googleToken, env.GOOGLE_CLIENT_ID));
     } catch {
       return fail(503, "Google sign-in verification is temporarily unavailable. Please try again.");
     }
@@ -252,10 +260,10 @@ export default {
     if (!env.ULTRON_USER_LIMITER || !env.ULTRON_IP_LIMITER) {
       return fail(503, "Rate limiting is not configured on this Worker yet.");
     }
-    const userLimit = await env.ULTRON_USER_LIMITER.limit({ key: String(googleIdentity.sub) });
+    const userLimit = await runtime.wait(() => env.ULTRON_USER_LIMITER.limit({ key: String(googleIdentity.sub) }));
     if (!userLimit.success) return fail(429, "You've reached the ULTRON message limit. Wait a minute and try again.", { "Retry-After": "60" });
     const clientIp = request.headers.get("CF-Connecting-IP") || "unknown";
-    const ipLimit = await env.ULTRON_IP_LIMITER.limit({ key: clientIp });
+    const ipLimit = await runtime.wait(() => env.ULTRON_IP_LIMITER.limit({ key: clientIp }));
     if (!ipLimit.success) return fail(429, "Too many messages from this network. Wait a minute and try again.", { "Retry-After": "60" });
 
     // Keep GEMINI_API_KEY server-side.
@@ -338,7 +346,8 @@ export default {
           headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": "flux-2-klein-4b", "X-ULTRON-Image-Action": "edit", "X-ULTRON-Image-Prompt": encodeURIComponent(imageEditRequest.prompt) },
         });
       } catch (error) {
-        console.warn("[ultron] FLUX.2 Klein image edit failed: " + redact(error && error.message || "unknown error").slice(0, 180));
+        runtime?.check();
+        runtime?.event("provider.attempt_failed", { provider: "cloudflare-ai", reason: "upstream_error" });
         return fail(502, "Image editing failed. Check that the image is valid and under the upload limit, then try again.");
       }
     }
@@ -362,7 +371,8 @@ export default {
           headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": "flux-1-schnell", "X-ULTRON-Image-Prompt": encodeURIComponent(imageRequest.prompt) },
         });
       } catch (error) {
-        console.warn("[ultron] FLUX image generation failed: " + redact(error && error.message || "unknown error").slice(0, 180));
+        runtime?.check();
+        runtime?.event("provider.attempt_failed", { provider: "cloudflare-ai", reason: "upstream_error" });
         return fail(502, "Image generation failed. Please try again in a moment.");
       }
     }
@@ -372,32 +382,36 @@ export default {
         return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Connected app tools are restricted to the ULTRON owner account." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
       }
       try {
-        const agentReply = await runComposioToolAgent(input, model, env, skillAccess, ctx);
+        const agentReply = await runComposioToolAgent(input, model, env, skillAccess, ctx, runtime);
+        runtime?.setProvider("gemini");
         return new Response(toStaticOpenAIStream(agentReply.text, agentReply.model), {
           headers: { ...cors.headers, "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "X-ULTRON-Model": agentReply.model },
         });
       } catch (error) {
+        runtime?.check();
         return fail(502, error.message || "Connected tool execution failed.");
       }
     }
 
     const chain = buildModelChain(model, env);
     const chatStarted = Date.now();
-    logWorkerEvent("chat.started", { route, modelCount: chain.length });
-    const result = await callGemini(chain, JSON.stringify(geminiBody), env.GEMINI_API_KEY, makeHealth(env, ctx));
+    runtime?.event("chat.started", { modelCount: chain.length });
+    const result = await callGemini(chain, JSON.stringify(geminiBody), env.GEMINI_API_KEY, makeHealth(env, ctx, runtime), runtime);
     if (result.error) {
-      logWorkerEvent("chat.gemini_failed", { route, status: Number(result.error.status) || 502, latencyMs: Date.now() - chatStarted });
+      runtime?.event("chat.gemini_failed", { status: Number(result.error.status) || 502 });
       // Use the independent provider only for upstream availability failures.
       // callGemini normalizes exhausted regional-routing 400s into a 503 busy
       // error, so those failures also reach this provider fallback.
       if ([429, 500, 502, 503, 504].includes(Number(result.error.status))) {
-        const backupMs = Math.min(22_000, Math.max(4_000, CLIENT_DEADLINE_MS - (Date.now() - chatStarted)));
+        runtime?.check();
+        const backupMs = Math.min(22_000, runtime ? runtime.remaining() : CLIENT_DEADLINE_MS - (Date.now() - chatStarted));
         const backupInput = forBackupProvider(input, activeMode);
-        let groqFailure = "";
+        let groqFailure = "", groqReason = "not_configured";
         if (env.GROQ_API_KEY) {
-          const backup = await callGroqFallback(backupInput, env, backupMs);
+          runtime?.event("provider.fallback", { fromProvider: "gemini", provider: "groq", status: Number(result.error.status), reason: Number(result.error.status) === 504 ? "timeout" : Number(result.error.status) === 429 ? "rate-limited" : "upstream_error" });
+          const backup = await callGroqFallback(backupInput, env, backupMs, runtime);
           if (backup.res) {
-            logWorkerEvent("chat.completed", { route, provider: "groq", model: backup.model, latencyMs: Date.now() - chatStarted, fallback: true });
+            runtime?.setProvider("groq");
             return new Response(backup.res.body, {
               headers: {
                 ...cors.headers,
@@ -411,11 +425,14 @@ export default {
             });
           }
           groqFailure = backup.message || "unknown error";
-          console.warn("[ultron] Groq fallback failed: " + redact(groqFailure).slice(0, 180));
+          groqReason = backup.reason || (backup.status === 429 ? "rate-limited" : "upstream_error");
         }
-        const cloudflare = await callCloudflareFallback(backupInput, env, backupMs);
+        runtime?.check();
+        const cloudflareMs = Math.min(22_000, runtime ? runtime.remaining() : CLIENT_DEADLINE_MS - (Date.now() - chatStarted));
+        runtime?.event("provider.fallback", { fromProvider: env.GROQ_API_KEY ? "groq" : "gemini", provider: "cloudflare-ai", reason: groqReason });
+        const cloudflare = await callCloudflareFallback(backupInput, env, cloudflareMs, runtime);
         if (cloudflare.text) {
-          logWorkerEvent("chat.completed", { route, provider: "cloudflare-ai", model: cloudflare.model, latencyMs: Date.now() - chatStarted, fallback: true });
+          runtime?.setProvider("cloudflare-ai");
           return new Response(toStaticOpenAIStream(cloudflare.text, cloudflare.model), {
             headers: {
               ...cors.headers,
@@ -428,7 +445,6 @@ export default {
             },
           });
         }
-        console.warn("[ultron] Cloudflare AI fallback failed: " + redact(cloudflare.message || "unknown error").slice(0, 180));
         if (!env.AI || typeof env.AI.run !== "function") {
           if (!env.GROQ_API_KEY) return fail(503, "Gemini is unavailable and the Groq backup is not configured on this Worker. Add GROQ_API_KEY under the Production environment's Variables and Secrets, then redeploy.");
           const backupMessage = redact(groqFailure || cloudflare.message || "unknown error").slice(0, 220);
@@ -440,7 +456,7 @@ export default {
       return fail(result.error.status, result.error.message, extra);
     }
 
-    logWorkerEvent("chat.completed", { route, provider: "gemini", model: result.model, latencyMs: Date.now() - chatStarted, fallback: result.model !== chain[0] });
+    runtime?.setProvider("gemini");
     return new Response(toOpenAIStream(result.res.body, result.model), {
       headers: {
         ...cors.headers,
@@ -455,6 +471,22 @@ export default {
   },
 };
 
+
+// Start the absolute budget before authentication or request-body processing.
+export default {
+  async fetch(request, env, ctx) {
+    const runtime = createRequestRuntime(request, { timeoutMs: CLIENT_DEADLINE_MS });
+    try {
+      const response = await runtime.wait(() => workerHandler.fetch(request, env, ctx, runtime));
+      return wrapResponseStream(response, runtime);
+    } catch (error) {
+      runtime.dispose();
+      if (!isRequestDeadlineError(error)) throw error;
+      runtime.event("request.timeout", { status: 504 });
+      return jsonResponse(errorBody(504, DEADLINE_MESSAGE), 504, corsFor(request, env).headers);
+    }
+  },
+};
 
 /* ---------- skill manifest and prompt guard ---------- */
 // A skill manifest is metadata only: names plus approved tool ids. It can
@@ -508,7 +540,7 @@ function guardSkillPrompt(messages, manifest) {
 }
 
 /* ---------- skill tool execution ---------- */
-async function createComposioMcpClient(apiKey) {
+async function createComposioMcpClient(apiKey, runtime) {
   const endpoint = "https://connect.composio.dev/mcp";
   const state = { sessionId: "", requestId: 0 };
   const send = async (method, params, notification = false) => {
@@ -520,12 +552,17 @@ async function createComposioMcpClient(apiKey) {
       "MCP-Protocol-Version": "2025-03-26",
       ...(state.sessionId ? { "MCP-Session-Id": state.sessionId } : {}),
     };
-    const response = await fetch(endpoint, {
-      method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(20000),
-    });
+    const scope = createAttempt(runtime, 20000, "composio");
+    let response, raw;
+    try {
+      response = await scope.wait(() => fetch(endpoint, {
+        method: "POST", headers, body: JSON.stringify(payload), signal: scope.signal,
+      }));
+      scope.headers(response);
+      raw = await scope.wait(() => response.text());
+    } finally { scope.dispose(); }
     const returnedSession = response.headers.get("MCP-Session-Id");
     if (returnedSession) state.sessionId = returnedSession;
-    const raw = await response.text();
     if (!response.ok) {
       let detail = raw.slice(0, 500);
       try { const parsed = JSON.parse(raw); detail = parsed.message || parsed.error?.message || detail; } catch {}
@@ -615,7 +652,7 @@ function composioMcpSchema(schema, depth = 0) {
   return output;
 }
 
-async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx) {
+async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx, runtime) {
   const hasComposio = Boolean(input.composioSessionId);
   const allowedTools = skillAccess && skillAccess.present
     ? new Set(skillAccess.tools)
@@ -624,7 +661,7 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
   if (hasComposio && !env.COMPOSIO_API_KEY) throw new Error("Add the Composio Consumer API key as COMPOSIO_API_KEY in Cloudflare Worker secrets.");
   if (!hasComposio && allowedTools.has("github.read") && !allowedTools.has("web.read")) throw new Error("Connect GitHub in Settings before using GitHub tools.");
 
-  const mcp = hasComposio ? await createComposioMcpClient(env.COMPOSIO_API_KEY) : null;
+  const mcp = hasComposio ? await createComposioMcpClient(env.COMPOSIO_API_KEY, runtime) : null;
   const available = mcp ? await mcp.listTools() : [];
   const safeMetaTools = new Set(["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS", "COMPOSIO_MULTI_EXECUTE_TOOL"]);
   const declarations = available
@@ -651,10 +688,11 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
   body.tools = [{ functionDeclarations: declarations }];
 
   const chain = buildModelChain(requestedModel, env);
-  const health = makeHealth(env, ctx);
+  const health = makeHealth(env, ctx, runtime);
   let model = chain[0], finalText = "", searchSessionId = "";
   for (let round = 0; round < 5; round++) {
-    const generated = await callGeminiJson(chain, body, env.GEMINI_API_KEY, health);
+    runtime?.check();
+    const generated = await callGeminiJson(chain, body, env.GEMINI_API_KEY, health, runtime);
     if (generated.error) throw new Error(generated.error.message);
     model = generated.model;
     const candidate = generated.data.candidates?.[0];
@@ -663,13 +701,14 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
     if (!calls.length) { finalText = parts.map(part => part.text || "").join(""); break; }
     body.contents.push(candidate.content);
     for (const part of calls) {
+      runtime?.check();
       const call = part.functionCall, name = String(call.name || "");
       const args = call.args && typeof call.args === "object" ? { ...call.args } : {};
       let result;
       try {
         if (name === "OPEN_PUBLIC_WEBPAGE") {
           if (!allowedTools.has("web.read")) throw new Error("web.read is not granted to the active skills.");
-          result = await readPublicPageForAgent(String(args.url || ""));
+          result = await (runtime ? runtime.wait(() => readPublicPageForAgent(String(args.url || ""), runtime)) : readPublicPageForAgent(String(args.url || "")));
         } else {
           if (!safeMetaTools.has(name)) throw new Error("This Composio action is not enabled in ULTRON.");
           if (!mcp) throw new Error("Connect GitHub in Settings before using Composio tools.");
@@ -698,12 +737,13 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
             searchSessionId = findComposioField(result, ["session_id", "sessionId"]) || searchSessionId;
           }
         }
-      } catch (error) { result = { error: error.message || "Tool execution failed." }; }
+      } catch (error) { runtime?.check(); result = { error: error.message || "Tool execution failed." }; }
       body.contents.push({ role: "user", parts: [{ functionResponse: { name, response: { result: JSON.stringify(result).slice(0, 18000) } } }] });
     }
   }
   if (!finalText) {
-    const last = await callGeminiJson(chain, { ...body, tools: undefined }, env.GEMINI_API_KEY, health);
+    runtime?.check();
+    const last = await callGeminiJson(chain, { ...body, tools: undefined }, env.GEMINI_API_KEY, health, runtime);
     if (last.error) throw new Error(last.error.message);
     model = last.model;
     finalText = (last.data.candidates?.[0]?.content?.parts || []).map(part => part.text || "").join("");
@@ -711,46 +751,62 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
   if (!finalText.trim()) throw new Error("The model completed tool calls but returned no final text.");
   return { text: finalText, model };
 }
-async function callGeminiJson(chain, body, apiKey, health) {
-  let totalAttempts = 0;
+async function callGeminiJson(chain, body, apiKey, health, runtime) {
+  let totalAttempts = 0, modelsTried = 0;
   let last = { status: 502, message: "Could not reach Gemini." };
-  await health.load();
+  runtime?.check();
+  await (runtime ? runtime.wait(() => health.load()) : health.load());
   for (const model of health.order(chain)) {
+    runtime?.check();
+    if (modelsTried++) runtime?.event("provider.fallback", { fromProvider: "gemini", provider: "gemini", status: last.status, reason: last.status === 504 ? "timeout" : last.status === 429 ? "rate-limited" : last.status === 404 ? "not-found" : "upstream_error" });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      runtime?.check();
       if (totalAttempts >= MAX_TOTAL_GEMINI_ATTEMPTS) return { error: last };
       totalAttempts++;
+      const scope = createAttempt(runtime, 45000, "gemini");
       try {
-        const response = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+        const response = await scope.wait(() => fetch(`${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
           method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-          body: JSON.stringify(body), signal: AbortSignal.timeout(45000),
-        });
-        const raw = await response.text(); let data = {};
+          body: JSON.stringify(body), signal: scope.signal,
+        }));
+        scope.headers(response);
+        const raw = await scope.wait(() => response.text());
+        scope.dispose(); // Provider duration excludes cooldown persistence and retry backoff.
+        let data = {};
         try { data = raw ? JSON.parse(raw) : {}; } catch {}
-        if (response.ok) { await health.clear(model); return { data, model }; }
+        if (response.ok) { await health.clear(model); runtime?.check(); return { data, model }; }
         const hint = retryHintMs(response.headers.get("Retry-After"), raw);
         last = { status: response.status, message: extractMessage(raw) || `Gemini returned HTTP ${response.status}.` };
-        if (isKeyProblem(response.status, raw)) { console.error(`[ultron] Gemini rejected the API key (HTTP ${response.status}).`); return { error: keyError() }; }
+        if (isKeyProblem(response.status, raw)) {
+          if (!runtime) console.error(`[ultron] Gemini rejected the API key (HTTP ${response.status}).`);
+          return { error: keyError() };
+        }
         if (response.status === 429) { await health.mark(model, hint || COOLDOWN_MS.rateLimited, "rate-limited"); break; }
         if (response.status === MODEL_GONE_STATUS) { await health.mark(model, COOLDOWN_MS.gone, "not-found"); break; }
         if (!RETRY_STATUS.has(response.status)) return { error: last };
-        if (attempt < 2) await sleep(backoffDelay(attempt, hint)); else await health.mark(model, COOLDOWN_MS.overloaded, "overloaded");
+        if (attempt < 2) await (runtime ? runtime.sleep(backoffDelay(attempt, hint)) : sleep(backoffDelay(attempt, hint)));
+        else await health.mark(model, COOLDOWN_MS.overloaded, "overloaded");
       } catch (error) {
+        runtime?.check();
         const timedOut = error && (error.name === "TimeoutError" || error.name === "AbortError");
         last = { status: timedOut ? 504 : 502, message: timedOut ? "Gemini did not respond in time." : "Could not reach Gemini." };
         await health.mark(model, timedOut ? COOLDOWN_MS.timeout : COOLDOWN_MS.overloaded, timedOut ? "timeout" : "unreachable");
         break;
-      }
+      } finally { scope.dispose(); }
     }
   }
+  runtime?.check();
   return { error: last };
 }
-async function readPublicPageForAgent(value) {
+
+async function readPublicPageForAgent(value, runtime) {
   let target;
   try { target = new URL(value); } catch { throw new Error("Enter a valid URL."); }
   if (target.protocol !== "https:" || !isPublicWebHost(target.hostname)) throw new Error("Only public HTTPS websites can be opened.");
   let response;
   for (let hop=0; hop<4; hop++) {
-    response = await fetch(target.toString(), { redirect:"manual", headers:{"User-Agent":"OpenClaude-PageReader/1.0","Accept":"text/html,text/plain;q=0.9"}, signal:AbortSignal.timeout(12000) });
+    runtime?.check();
+    response = await fetch(target.toString(), { redirect:"manual", headers:{"User-Agent":"OpenClaude-PageReader/1.0","Accept":"text/html,text/plain;q=0.9"}, signal:runtime ? AbortSignal.any([runtime.signal, AbortSignal.timeout(Math.max(0, Math.floor(Math.min(12000, runtime.remaining()))))]) : AbortSignal.timeout(12000) });
     if (![301,302,303,307,308].includes(response.status)) break;
     const location=response.headers.get("Location"); if(!location) break;
     target=new URL(location,target);
@@ -938,29 +994,33 @@ function classifyRequest(messages) {
   return "general";
 }
 
-async function callCloudflareFallback(input, env, timeoutMs = 18_000) {
+async function callCloudflareFallback(input, env, timeoutMs = 18_000, runtime) {
+  runtime?.check();
   if (!env.AI || typeof env.AI.run !== "function") return { message: "Cloudflare Workers AI binding is unavailable." };
   const messages = [];
   for (const message of (Array.isArray(input.messages) ? input.messages : [])) {
     if (!message || !["system", "user", "assistant"].includes(message.role)) continue;
-    if (Array.isArray(message.content) && message.content.some((part) => part && part.type === "image_url")) {
+    if (Array.isArray(message.content) && message.content.some(part => part && part.type === "image_url")) {
       return { message: "Cloudflare text fallback cannot process image attachments." };
     }
     messages.push({ role: message.role, content: textOf(message.content) });
   }
   if (!messages.length) return { message: "No compatible text messages for Cloudflare AI." };
+  const attempt = createAttempt(runtime, timeoutMs, "cloudflare-ai");
   try {
     const model = String(env.CLOUDFLARE_AI_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
-    const result = await Promise.race([
-      env.AI.run(model, { messages, max_tokens: Number.isInteger(input.max_tokens) ? input.max_tokens : 2048 }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Cloudflare AI timed out.")), timeoutMs)),
-    ]);
+    // The binding exposes neither HTTP headers nor a documented cancellation API.
+    // Bound the caller and observe late settlement; never begin work after expiry.
+    const result = await attempt.wait(() => env.AI.run(model, { messages, max_tokens: Number.isInteger(input.max_tokens) ? input.max_tokens : 2048 }));
+    attempt.response();
     const text = typeof result === "string" ? result : result && (result.response || result.output_text || result.result);
-    if (typeof text !== "string" || !text.trim()) return { message: "Cloudflare AI returned an empty response." };
+    if (typeof text !== "string" || !text.trim()) { attempt.fail(502, "empty_response"); return { message: "Cloudflare AI returned an empty response." }; }
     return { text: text.trim(), model: "cloudflare/" + model };
   } catch (error) {
-    return { message: error && error.message ? error.message : "Cloudflare AI request failed." };
-  }
+    runtime?.check();
+    attempt.fail(502, error?.name === "TimeoutError" ? "timeout" : "upstream_error");
+    return { message: error?.name === "TimeoutError" ? "Cloudflare AI timed out." : error?.message || "Cloudflare AI request failed." };
+  } finally { attempt.dispose(); }
 }
 
 /* ---------- model chain ---------- */
@@ -988,7 +1048,7 @@ function buildModelChain(requested, env) {
 const memCooldowns = new Map(); // model -> epoch ms when it may be tried again
 let kvCooldownCache = { at: 0, map: {} };
 
-function makeHealth(env, ctx) {
+function makeHealth(env, ctx, runtime) {
   const kv = env && env.ULTRON_STATE && typeof env.ULTRON_STATE.get === "function" ? env.ULTRON_STATE : null;
 
   async function save() {
@@ -1030,7 +1090,8 @@ function makeHealth(env, ctx) {
     async mark(model, ms, reason) {
       const wait = Math.min(COOLDOWN_MAX_MS, Math.max(COOLDOWN_MIN_MS, Number(ms) || COOLDOWN_MS.overloaded));
       memCooldowns.set(model, Date.now() + wait);
-      console.warn(`[ultron] ${model} resting ${Math.round(wait / 1000)}s (${reason})`);
+      if (runtime) runtime.event("provider.cooldown", { provider: "gemini", reason });
+      else console.warn(`[ultron] ${model} resting ${Math.round(wait / 1000)}s (${reason})`);
       await save();
     },
     async clear(model) { if (memCooldowns.delete(model)) await save(); },
@@ -1082,14 +1143,14 @@ function backoffDelay(attempt, hintMs) {
 
 // Reads up to the first complete SSE event, so an error frame sent inside a 200 response
 // still triggers a retry or a fallback before any text reaches the browser.
-async function primeStream(res) {
+async function primeStream(res, attempt) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const held = [];
   let text = "";
   try {
     while (!/\r?\n\r?\n/.test(text)) {
-      const { value, done } = await reader.read();
+      const { value, done } = await (attempt ? attempt.wait(() => reader.read()) : reader.read());
       if (done) break;
       held.push(value);
       text += dec.decode(value, { stream: true });
@@ -1129,109 +1190,118 @@ async function primeStream(res) {
 }
 
 // One attempt against one model. Resolves to { res, model } or a plain error record.
-async function callModel(model, body, apiKey, timeoutMs = HEADERS_TIMEOUT_MS) {
+async function callModel(model, body, apiKey, timeoutMs = HEADERS_TIMEOUT_MS, runtime) {
   const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const attempt = createAttempt(runtime, timeoutMs, "gemini");
+  let streaming = false;
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body,
-      signal: ctrl.signal,
-    });
+    const res = await attempt.wait(() => fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, body, signal: attempt.signal,
+    }));
+    attempt.headers(res);
     if (!res.ok) {
-      clearTimeout(timer);
-      const text = await res.text().catch(() => "");
+      const text = await attempt.wait(() => res.text()).catch(error => { runtime?.check(); return ""; });
       const retryAfterMs = retryHintMs(res.headers.get("Retry-After"), text);
-      const regionalRoutingIssue = res.status === 400 && /location is not supported/i.test(text);
       return {
-        status: res.status,
-        message: extractMessage(text) || `Gemini API returned HTTP ${res.status}.`,
-        retryAfter: retryAfterMs ? String(Math.ceil(retryAfterMs / 1000)) : undefined,
-        retryAfterMs,
-        keyProblem: isKeyProblem(res.status, text),
-        regionalRoutingIssue,
+        status: res.status, message: extractMessage(text) || `Gemini API returned HTTP ${res.status}.`,
+        retryAfter: retryAfterMs ? String(Math.ceil(retryAfterMs / 1000)) : undefined, retryAfterMs,
+        keyProblem: isKeyProblem(res.status, text), regionalRoutingIssue: res.status === 400 && /location is not supported/i.test(text),
       };
     }
-    const primed = await primeStream(res); // the first event must arrive before the timer fires
-    clearTimeout(timer); // from here the stream itself runs without a cutoff
-    if (primed.failure) return primed.failure;
+    const primed = await primeStream(res, attempt);
+    if (primed.failure) { attempt.fail(primed.failure.status); return primed.failure; }
+    attempt.streaming();
+    streaming = true;
     return { res: { body: primed.body }, model };
-  } catch (err) {
-    clearTimeout(timer);
-    return err && err.name === "AbortError"
+  } catch (error) {
+    runtime?.check();
+    attempt.fail(502, error && (error.name === "AbortError" || error.name === "TimeoutError") ? "timeout" : "unreachable");
+    return error && (error.name === "AbortError" || error.name === "TimeoutError")
       ? { status: 504, message: "Gemini did not respond in time.", timedOut: true }
       : { status: 502, message: "Could not reach the Gemini API." };
-  }
+  } finally { if (!streaming) attempt.dispose(); }
 }
 
 // Independent OpenAI-compatible backup. Configure GROQ_API_KEY as a Worker
 // secret; GROQ_MODEL is optional and defaults to a currently supported text model.
 // This path deliberately skips image/PDF and tool requests rather than silently
 // dropping attachments or pretending provider-specific tools are portable.
-async function callGroqFallback(input, env, timeoutMs = 30_000) {
+async function callGroqFallback(input, env, timeoutMs = 30_000, runtime) {
+  runtime?.check();
   const messages = [];
   for (const message of (Array.isArray(input.messages) ? input.messages : [])) {
     if (!message || !["system", "user", "assistant"].includes(message.role)) continue;
     if (Array.isArray(message.content) && message.content.some(part => part && part.type === "image_url")) {
-      return { message: "Groq backup skipped because this request contains an image or document attachment." };
+      return { reason: "incompatible_input", message: "Groq backup skipped because this request contains an image or document attachment." };
     }
     messages.push({ role: message.role, content: textOf(message.content) });
   }
-  if (!messages.length) return { message: "Groq backup has no compatible text messages." };
+  if (!messages.length) return { reason: "incompatible_input", message: "Groq backup has no compatible text messages." };
   const configuredModel = String(env.GROQ_MODEL || "openai/gpt-oss-120b").trim();
   // Groq shut down llama-3.3-70b-versatile for developer-tier usage on 2026-08-16.
   // Normalize the old configured value too, so existing Worker secrets do not keep breaking fallback.
   const model = configuredModel === "llama-3.3-70b-versatile" ? "openai/gpt-oss-120b" : configuredModel;
-  if (!GROQ_MODEL_RE.test(model) || model.includes("..")) return { message: "GROQ_MODEL is invalid." };
+  if (!GROQ_MODEL_RE.test(model) || model.includes("..")) return { reason: "not_configured", message: "GROQ_MODEL is invalid." };
   const body = { model, messages, stream: true };
   if (typeof input.temperature === "number") body.temperature = input.temperature;
   if (typeof input.top_p === "number") body.top_p = input.top_p;
   if (Number.isInteger(input.max_tokens) && input.max_tokens > 0) body.max_tokens = input.max_tokens;
+  const attempt = createAttempt(runtime, timeoutMs, "groq");
+  let streaming = false;
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.GROQ_API_KEY },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (response.ok && response.body) return { res: response, model };
-    const raw = await response.text().catch(() => "");
+    const response = await attempt.wait(() => fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.GROQ_API_KEY },
+      body: JSON.stringify(body), signal: attempt.signal,
+    }));
+    attempt.headers(response);
+    if (response.ok && response.body) {
+      attempt.streaming();
+      streaming = true;
+      return { res: response, model };
+    }
+    const raw = await attempt.wait(() => response.text()).catch(error => { runtime?.check(); return ""; });
     return { status: response.status, message: extractMessage(raw) || "Groq returned HTTP " + response.status + "." };
   } catch (error) {
-    return { status: 502, message: error && error.name === "TimeoutError" ? "Groq backup timed out." : "Could not reach the Groq backup." };
-  }
+    runtime?.check();
+    attempt.fail(502, error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable");
+    return { status: 502, reason: error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable", message: error && (error.name === "TimeoutError" || error.name === "AbortError") ? "Groq backup timed out." : "Could not reach the Groq backup." };
+  } finally { if (!streaming) attempt.dispose(); }
 }
 
-async function callGemini(chain, body, apiKey, health) {
+async function callGemini(chain, body, apiKey, health, runtime) {
   const started = Date.now();
   const tried = [];
   let totalAttempts = 0;
   let last = { status: 502, message: "Could not reach the Gemini API." };
-  await health.load();
+  runtime?.check();
+  await (runtime ? runtime.wait(() => health.load()) : health.load());
+  runtime?.check();
 
   for (const model of health.order(chain)) {
+    runtime?.check();
+    if (tried.length) runtime?.event("provider.fallback", { fromProvider: "gemini", provider: "gemini", status: last.status, reason: last.timedOut ? "timeout" : last.status === 429 ? "rate-limited" : last.status === 404 ? "not-found" : "upstream_error" });
     tried.push(model);
     // A model that is resting gets one quick try as a last resort, not a full set of retries.
     const attempts = health.isResting(model) ? 1 : ATTEMPTS_PER_MODEL;
     for (let attempt = 1; attempt <= attempts; attempt++) {
+      runtime?.check();
       if (totalAttempts >= MAX_TOTAL_GEMINI_ATTEMPTS) return { error: busyError(tried, last) };
       totalAttempts++;
-      const left = TOTAL_BUDGET_MS - (Date.now() - started);
+      const left = Math.min(TOTAL_BUDGET_MS - (Date.now() - started), runtime ? runtime.remaining() : Infinity);
       if (left < MIN_ATTEMPT_MS) return { error: busyError(tried, last) };
 
-      const outcome = await callModel(model, body, apiKey, Math.min(HEADERS_TIMEOUT_MS, left));
+      const outcome = await callModel(model, body, apiKey, Math.min(HEADERS_TIMEOUT_MS, left), runtime);
       if (outcome.res) { // this model answered
-        await health.clear(model);
+        await (runtime ? runtime.wait(() => health.clear(model)) : health.clear(model));
+        runtime?.check();
         return { ...outcome, tried };
       }
       last = outcome;
-      console.warn(`[ultron] ${model} attempt ${attempt}/${attempts} failed: HTTP ${outcome.status}${outcome.timedOut ? " (timeout)" : ""}`);
+      if (!runtime) console.warn(`[ultron] ${model} attempt ${attempt}/${attempts} failed: HTTP ${outcome.status}${outcome.timedOut ? " (timeout)" : ""}`);
 
       // A rejected key will not be fixed by another model, and its details never leave the Worker.
       if (outcome.keyProblem) {
-        console.error(`[ultron] Gemini rejected the API key (HTTP ${outcome.status}).`);
+        if (!runtime) console.error(`[ultron] Gemini rejected the API key (HTTP ${outcome.status}).`);
         return { error: keyError() };
       }
       // A bad request will not be fixed by trying another model either.
@@ -1245,7 +1315,7 @@ async function callGemini(chain, body, apiKey, health) {
       if (outcome.timedOut) { await health.mark(model, COOLDOWN_MS.timeout, "timeout"); break; }
 
       // 500, 502, 503, 504: back off exponentially, then rest the model if it never recovers.
-      if (attempt < attempts) await sleep(backoffDelay(attempt, outcome.retryAfterMs));
+      if (attempt < attempts) await (runtime ? runtime.sleep(backoffDelay(attempt, outcome.retryAfterMs)) : sleep(backoffDelay(attempt, outcome.retryAfterMs)));
       else await health.mark(model, COOLDOWN_MS.overloaded, "overloaded");
     }
   }
@@ -1418,14 +1488,15 @@ function validateConversationArchive(input) {
 }
 
 /* ---------- Google account authorization ---------- */
-async function authenticateGoogleRequest(request, env) {
+async function authenticateGoogleRequest(request, env, runtime) {
   const header = request.headers.get("Authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!token) return { status: 401, message: "Sign in with Google to continue." };
   try {
-    const identity = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
+    const identity = await (runtime ? runtime.wait(() => verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID)) : verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID));
     return identity ? { identity } : { status: 401, message: "Your Google sign-in is invalid or expired. Sign in again." };
-  } catch {
+  } catch (error) {
+    runtime?.check();
     return { status: 503, message: "Google sign-in verification is temporarily unavailable. Try again." };
   }
 }
@@ -1534,11 +1605,6 @@ function corsFor(request, env) {
     return { headers, allowed: true };
   }
   return { headers, allowed: !origin }; // non-browser requests still require the bearer token on private routes
-}
-
-function logWorkerEvent(event, fields = {}) {
-  const safe = { service: "ultron", event, at: new Date().toISOString(), ...fields };
-  console.log(JSON.stringify(safe));
 }
 
 function errorType(status) {
