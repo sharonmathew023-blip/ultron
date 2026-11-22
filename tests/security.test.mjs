@@ -8,7 +8,7 @@ const worker = read("../worker.js");
 const skillEngine = read("../skill-engine.js");
 const wrangler = read("../wrangler.toml");
 
-// Never commit recognizable provider credentials into browser-delivered files.
+// Never commit recognizable provider credentials or provider model IDs into browser-delivered files.
 const credentialPatterns = [
   /AIza[0-9A-Za-z_-]{30,}/,
   /gsk_[0-9A-Za-z]{20,}/,
@@ -29,6 +29,9 @@ assert.ok(skillEngine.includes("if (!/\\.(md|txt)$/i.test(fileName))"), "skill-p
 assert.doesNotMatch(skillEngine, /\\.\(md\|txt\|markdown\)/, "legacy .markdown extension is not accepted");
 assert.match(frontend, /accept="\.md,\.txt,text\/markdown,text\/plain"/, "file picker matches the supported extensions");
 assert.doesNotMatch(frontend, /localStorage\.setItem\(STORAGE_KEY,\s*JSON\.stringify\(state\)\)/, "raw state must never be persisted");
+assert.doesNotMatch(frontend, /gemini-[a-z0-9.-]+|openai\\//i, "provider model IDs must remain server-side");
+assert.match(frontend, /model: \'auto\'/, "browser defaults to an abstract model tier");
+assert.match(worker, /requestedModel === \"reasoning\"[\\s\\S]*requestedModel === \"fast\"/, "Worker resolves abstract tiers using server configuration");
 
 // Worker secrets remain environment bindings; privileged routes use verified Google identity.
 assert.match(worker, /env\.GEMINI_API_KEY/);
