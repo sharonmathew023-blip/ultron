@@ -18,24 +18,6 @@ export const MODES = {
       "You are ULTRON in Research mode, but web search is down right now. " + NO_SEARCH_NOTE + " " +
       "Lead with the answer, then give key points as short bullets.",
   },
-  agent: {
-    webSearch: false,
-    system:
-      "You are ULTRON in Agent mode. Break the task into at most 5 numbered steps. " +
-      "Do each step, then report what you did and what is left.",
-  },
-  studio: {
-    webSearch: false,
-    system:
-      "You are ULTRON in Studio mode. Build websites, games, images and code. " +
-      "Return complete, runnable code in one block per file.",
-  },
-  developer: {
-    webSearch: false,
-    system:
-      "You are ULTRON in Developer mode. Help with GitHub, debugging, tests and deployment. " +
-      "You cannot change anything yourself, so give exact commands or diffs for the user to run.",
-  },
 };
 
 // Mutates the request: adds the mode prompt first, turns on Google Search when the mode wants it.

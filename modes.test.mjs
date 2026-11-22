@@ -31,11 +31,12 @@ test("research adds its prompt first and turns on Google Search", () => {
   assert.equal(input.web_search, true);
 });
 
-test("agent, studio and developer add a prompt but never turn on search", () => {
-  for (const mode of ["agent", "studio", "developer"]) {
+test("only chat and research are supported modes", () => {
+  assert.deepEqual(Object.keys(MODES), ["research"]);
+  for (const mode of ["agent", "studio", "developer", "workspace", "voice"]) {
     const input = { ...base(), mode };
-    assert.equal(applyMode(input), mode);
-    assert.equal(input.messages[0].role, "system");
+    assert.equal(applyMode(input), null);
+    assert.equal(input.messages.length, 1);
     assert.equal(input.web_search, undefined);
   }
 });
@@ -61,7 +62,7 @@ test("backup provider: the plain search toggle gets a no-search note", () => {
 });
 
 test("backup provider: requests without search pass through untouched", () => {
-  const input = { ...base(), mode: "studio" };
-  applyMode(input);
-  assert.equal(forBackupProvider(input, "studio"), input);
+  const input = { ...base(), mode: "chat" };
+  assert.equal(applyMode(input), null);
+  assert.equal(forBackupProvider(input, "chat"), input);
 });

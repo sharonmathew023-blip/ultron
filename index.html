@@ -1053,11 +1053,6 @@ ULTRON sends requests to your Cloudflare Worker. Keep GEMINI_API_KEY in Cloudfla
 </div>
 <p style="font-size:0.78rem;color:var(--text-muted);">Private connector tools are available only to the ULTRON owner account after Google sign-in.</p>
 <div class="field-group">
-<label>Gemini model</label>
-<input type="text" id="modelInput" value="gemini-3.5-flash" spellcheck="false" />
-<p style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">If this model is overloaded, the app automatically tries gemini-3.6-flash, then gemini-flash-lite-latest.</p>
-</div>
-<div class="field-group">
 <label>Project System Prompt</label>
 <textarea id="sysPromptInput" rows="3">You are ULTRON, a helpful, concise AI assistant.</textarea>
 </div>
@@ -1120,7 +1115,7 @@ function toggleWebSearch() {
   if (!button) return;
   button.classList.toggle('active', webSearchEnabled);
   button.setAttribute('aria-pressed', String(webSearchEnabled));
-  button.title = webSearchEnabled ? 'Google Search is enabled for the next answer' : 'Use Google Search for this answer';
+  button.title = webSearchEnabled ? 'Research is enabled: web search with sources' : 'Research: web search with sources';
 }
 document.getElementById('webSearchToggle').addEventListener('click', toggleWebSearch);
 function decodeGooglePayload(token) {
@@ -1241,7 +1236,7 @@ filter: 'all',
 search: '',
 workerUrl: 'https://openclaude-api.sharonmathew023.workers.dev/chat/completions',
 composioSessionId: '',
-model: 'gemini-3.5-flash',
+model: 'auto',
 systemPrompt: 'You are ULTRON, a helpful, concise AI assistant.',
 customSkills: [],
 skills: [],
@@ -1892,7 +1887,7 @@ container.innerHTML = `
 <button class="quick-action starter-tile" type="button" data-starter="brainstorm" data-prompt="Help me brainstorm creative ideas. Give me distinct directions with practical pros and cons."><span class="starter-icon starter-brainstorm"><svg viewBox="0 0 24 24"><path d="M9 18h6m-5 4h4m-4-8a5 5 0 1 1 4 0c-.8.6-1 1.3-1 2h-2c0-.7-.2-1.4-1-2Z"/></svg></span><span class="starter-copy"><strong>Brainstorm</strong><small>Explore fresh directions</small></span></button>
 </div></div>`;
 container.querySelectorAll('.quick-action').forEach(action => action.addEventListener('click', () => {document.getElementById('promptInput').value=action.dataset.prompt;document.getElementById('promptInput').focus();updateComposerAction();}));
-const readout=document.getElementById('engineReadout');if(readout){const raw=(document.getElementById('engineStatus')||{}).textContent||'';const sel=document.getElementById('modelSelect');const offline=!!sel&&sel.value==='offline-synth';readout.dataset.state=(!offline&&/ready/i.test(raw))?'ready':'idle';readout.querySelector('.engine-state').textContent=offline?'Offline sandbox':(raw.replace(/^Engine:\s*/,'')||'Worker status unknown');const m=(document.getElementById('modelInput')||{}).value||'gemini-3.5-flash';readout.querySelector('.engine-chain').textContent=offline?'':[m,'gemini-3.6-flash','gemini-flash-lite-latest'].join(' > ');}
+const readout=document.getElementById('engineReadout');if(readout){const raw=(document.getElementById('engineStatus')||{}).textContent||'';const sel=document.getElementById('modelSelect');const offline=!!sel&&sel.value==='offline-synth';readout.dataset.state=(!offline&&/ready/i.test(raw))?'ready':'idle';readout.querySelector('.engine-state').textContent=offline?'Offline sandbox':(raw.replace(/^Engine:\s*/,'')||'Worker status unknown');readout.querySelector('.engine-chain').textContent=offline?'':'Automatic provider routing';}
 return;
 }
 const lastMessage=thread.messages[thread.messages.length-1];
@@ -2218,7 +2213,7 @@ async function readWorkerReply(response, onChunk, onActivity) {
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const NETWORK_RETRIES = 2;
-const MODEL_FALLBACKS = ['gemini-3.6-flash', 'gemini-flash-lite-latest'];
+// The Worker owns model selection and the complete fallback chain.
 let activeRequest = null;
 // Keep original attachment payloads in memory for one-tap retries during the current session.
 const retryPayloads = new WeakMap();
@@ -2337,8 +2332,8 @@ userSignal.removeEventListener('abort', onUser);
 // The model chosen in Settings first, then the backups, so one saturated model cannot
 // take the whole app down. Google's 503 "high demand" error clears on another model.
 function modelChain() {
-const primary = (state.model || '').trim() || 'gemini-3.5-flash';
-return [primary, ...MODEL_FALLBACKS.filter(model => model !== primary)];
+const tier = (state.model || 'auto').trim();
+return [['auto','reasoning','fast'].includes(tier) ? tier : 'auto'];
 }
 // A retired or misspelled model is worth replacing; a bad token or URL is not.
 function isModelProblem(status, message) {
@@ -2650,7 +2645,7 @@ renderChat();
 return;
 }
 const answeredBy = !isError && model === 'cloudflare-worker' ? lastReplyModel : '';
-const wantedModel = (state.model || '').trim() || 'gemini-3.5-flash';
+const wantedModel = (state.model || 'auto').trim();
 let finalAssistantMessage;
 if (streamingAssistant) {
 streamingAssistant.content = replyText;
@@ -2777,7 +2772,6 @@ document.getElementById('tabPreviewBtn').classList.remove('active');
 });
 document.getElementById('openSettingsBtn').addEventListener('click', () => {
 document.getElementById('workerUrlInput').value = state.workerUrl;
-document.getElementById('modelInput').value = state.model || 'gemini-3.5-flash';
 document.getElementById('sysPromptInput').value = state.systemPrompt;
 renderSkillList();
 document.getElementById('settingsModal').classList.add('open');
@@ -2843,8 +2837,7 @@ function closeSettingsModal(){document.getElementById('settingsModal').classList
 document.getElementById('settingsCloseBtn').addEventListener('click',closeSettingsModal);
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
   state.workerUrl = document.getElementById('workerUrlInput').value.trim() || defaultState.workerUrl;
-  state.model = document.getElementById('modelInput').value.trim() || 'gemini-3.5-flash';
-  state.systemPrompt = document.getElementById('sysPromptInput').value.trim() || defaultState.systemPrompt;
+    state.systemPrompt = document.getElementById('sysPromptInput').value.trim() || defaultState.systemPrompt;
   document.getElementById('providerBadge').textContent = 'Worker';
   saveState();
   closeSettingsModal();
@@ -2883,9 +2876,9 @@ renderSkillList();
 <script id="ultron-redesign-behaviour">
 (() => {
   const tiers = {
-    one: { name: "ULTRON One", description: "Auto router", model: "auto" },
-    pro: { name: "ULTRON Pro", description: "Deep reasoning", model: "gemini-4-argon" },
-    flash: { name: "ULTRON Flash", description: "Ultra fast", model: "gemini-3.5-flash-lite" }
+    one: { name: "ULTRON One", description: "Automatic routing", model: "auto" },
+    pro: { name: "ULTRON Pro", description: "Deeper reasoning", model: "reasoning" },
+    flash: { name: "ULTRON Flash", description: "Fast responses", model: "fast" }
   };
   let activeTier = "one";
   const trigger = document.getElementById("ultronTierTrigger");
@@ -2931,9 +2924,9 @@ renderSkillList();
   }));
   // Restore the selected tier from persisted model preference without overwriting Offline Sandbox.
   const savedModel = typeof state !== "undefined" ? state.model : "auto";
-  if (savedModel === "gemini-4-argon") chooseTier("pro");
-  else if (savedModel === "gemini-3.5-flash-lite") chooseTier("flash");
-  else if (savedModel === "auto" || savedModel === "gemini-3.5-flash" || !savedModel) chooseTier("one");
+  if (savedModel === "reasoning") chooseTier("pro");
+  else if (savedModel === "fast") chooseTier("flash");
+  else chooseTier("one");
   // The provider chain is real; do not show invented latency or uptime figures.
   const readout = document.getElementById("engineReadout");
   if (readout) {

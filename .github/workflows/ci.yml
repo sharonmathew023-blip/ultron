@@ -32,3 +32,5 @@ jobs:
         run: node --test modes.test.mjs
       - name: Run browser timeout and retry tests
         run: node --test tests/client-timeout.test.mjs
+      - name: Run identity regression tests
+        run: node --test identity.test.mjs

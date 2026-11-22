@@ -289,14 +289,20 @@ export default {
     const activeMode = applyMode(input);
     applyUltronIdentity(input); // append last so the core identity has final system-prompt priority
 
-    const requestedModel = String(input.model || "").trim();
+    const requestedModel = String(input.model || "auto").trim();
     const route = classifyRequest(input.messages);
     const automaticModel = route === "fast"
-      ? String(env.FAST_MODEL || "gemini-flash-lite-latest")
+      ? String(env.FAST_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
       : route === "reasoning"
         ? String(env.REASONING_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
         : String(env.DEFAULT_MODEL || DEFAULT_MODEL);
-    const model = String(requestedModel && requestedModel !== "auto" ? requestedModel : automaticModel).replace(/^models\//, "");
+    // The browser sends only an abstract tier. Actual provider model IDs stay server-side.
+    const selectedModel = requestedModel === "reasoning"
+      ? String(env.REASONING_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
+      : requestedModel === "fast"
+        ? String(env.FAST_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
+        : requestedModel === "auto" ? automaticModel : requestedModel;
+    const model = selectedModel.replace(/^models\//, "");
     if (!MODEL_RE.test(model)) return fail(400, "Invalid model name.");
 
     const geminiBody = buildGeminiBody(input);
