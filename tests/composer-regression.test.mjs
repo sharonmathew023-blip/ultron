@@ -17,9 +17,10 @@ test("no mobile rule or script can hide the Send button", () => {
   assert.doesNotMatch(html, /setProperty\(['"]display['"],\s*['"]none['"],\s*['"]important['"]\)/);
   assert.match(css, /#sendBtn\.send-btn\{[^}]*display:inline-flex!important/);
 });
-test("Enter inserts a newline and Ctrl/Command+Enter sends", () => {
+test("desktop Enter sends, Shift+Enter inserts a newline, and mobile Enter stays native", () => {
   assert.match(html, /enterkeyhint="enter"/);
-  assert.match(html, /if \(!e\.ctrlKey && !e\.metaKey\) return;[\s\S]{0,100}e\.preventDefault\(\);[\s\S]{0,50}handleSend\(\);/);
+  assert.match(html, /const isDesktopPlatform = [^;]+/);
+  assert.match(html, /if \(!isDesktopPlatform \|\| !isEnter \|\| e\.isComposing\) return;[\s\S]{0,100}if \(e\.shiftKey\) return;[\s\S]{0,100}e\.preventDefault\(\);[\s\S]{0,50}handleSend\(\);/);
   assert.match(html, /id="sendBtn"[^>]*aria-label="Send message"/);
 });
 
