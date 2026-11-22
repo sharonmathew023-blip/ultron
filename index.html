@@ -2435,6 +2435,22 @@ const retryMode = currentComposerMode;
 const attachments = selectedAttachments.slice();
 if (!prompt && !attachments.length) return;
 let explicitSkills = [];
+if (prompt === '/memory') {
+  showLocalCommandReply(userMemoryFacts.length
+    ? '**Saved ULTRON memories**\\n\\n' + userMemoryFacts.map((fact, index) => (index + 1) + '. ' + fact.text).join('\\n') + '\\n\\nUse /forget-memory followed by a phrase to remove a matching memory.'
+    : 'ULTRON has no saved preferences for this account yet. Start a message with “Remember that…” or “I prefer…” to teach it.');
+  input.value = ''; updateComposerAction(); return;
+}
+if (prompt.startsWith('/forget-memory')) {
+  const phrase = prompt.replace(/^\\/forget-memory\\s*/i, '').trim().toLowerCase();
+  const next = phrase ? userMemoryFacts.filter(fact => !String(fact.text || '').toLowerCase().includes(phrase)) : [];
+  try {
+    await cloudStoreRequest('memory', 'PUT', { facts: next });
+    userMemoryFacts = next;
+    showLocalCommandReply(phrase ? 'Removed matching memories.' : 'Cleared all saved memories for this account.');
+  } catch (error) { showLocalCommandReply('Could not update saved memory. Please try again.'); }
+  input.value = ''; updateComposerAction(); return;
+}
 if (prompt.startsWith('/')) {
   const parsed = window.SkillEngineUI.parseCommands(prompt);
   if (parsed.builtin) {
