@@ -103,3 +103,40 @@ For GitHub Pages, configure the repository's Pages source to deploy from `main` 
 ## License
 
 No license is currently specified. All rights remain with the repository owner unless a license is added.
+
+
+## Worker deadlines and lifecycle diagnostics
+
+`npm test` runs every dependency-free CI check, including deadline and stream regressions.
+The Worker creates one absolute **55-second** budget when it receives a request. Authentication,
+provider retries, backoff, Gemini model changes, Groq/Cloudflare AI fallback, tool execution and
+response streaming all consume that same budget; a new attempt or tool round never resets it.
+Existing per-attempt/primary-provider limits may stop a stage sooner.
+
+Before a streaming response is returned, expiry produces HTTP **504** using the existing JSON
+error envelope and CORS rules. After the response is committed, expiry produces an OpenAI-compatible
+SSE error with code **504**, followed by `[DONE]`, and cancels upstream reads/fetches. An AI binding
+without a cancellation API is bounded for the caller; a late result is ignored rather than causing
+another fallback. This does not guarantee cancellation of already-started provider computation.
+
+Diagnostics separate `request.received`, `provider.headers_received`, `stream.first_token`,
+`stream.completed` and `stream.failed`. `chat.completed` is emitted only at actual stream completion
+(or when a consumer closes after `[DONE]`), never at response construction. First-token timing is
+measured when the proxy forwards a visible content frame, not as a browser/network TTFB measurement.
+The Cloudflare AI binding exposes a response result rather than HTTP headers, so it records
+`provider.response_received` instead of inventing a headers timestamp.
+
+Unknown-route events contain only a fixed method label and route category, plus the fixed event
+metadata. The diagnostic allowlist excludes raw paths, query strings, prompts, model IDs, credentials,
+headers, personal data and arbitrary error text. No production log retention, secrets, bindings,
+deployment triggers or rate-limit settings are enabled or changed by this code change.
+
+
+Each upstream attempt has an anonymous numeric attempt ID and independent start, header/result,
+and completion/failure durations. `provider.fallback` records only allowlisted source/destination
+provider names, a fixed reason category and an HTTP status when available. `stream.first_byte`
+records proxy-observed TTFB from request receipt (distinct from first visible content), while
+`streamDurationMs` measures response-stream handoff through completion/failure. These server-side
+measurements do not claim to include browser/network transit time.
+
+Stream `ttfbMs` measures backend receipt to the first forwarded response byte; `streamDurationMs` measures response handoff to end, and `totalDurationMs` includes pre-stream work. These are proxy observations, not browser network timings.

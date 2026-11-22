@@ -1,0 +1,8 @@
+{
+  "name": "ultron-checks",
+  "private": true,
+  "scripts": {
+    "test": "node tests/run-ci.mjs"
+  },
+  "type": "module"
+}
