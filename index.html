@@ -1115,7 +1115,7 @@ function toggleWebSearch() {
   if (!button) return;
   button.classList.toggle('active', webSearchEnabled);
   button.setAttribute('aria-pressed', String(webSearchEnabled));
-  button.title = webSearchEnabled ? 'Google Search is enabled for the next answer' : 'Use Google Search for this answer';
+  button.title = webSearchEnabled ? 'Research is enabled: web search with sources' : 'Research: web search with sources';
 }
 document.getElementById('webSearchToggle').addEventListener('click', toggleWebSearch);
 function decodeGooglePayload(token) {
