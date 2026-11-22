@@ -1329,6 +1329,7 @@ delete safe.threads;
 delete safe.accessToken; // private Worker tokens must never enter persistent browser storage
 safe.threadStorageVersion = THREAD_DB_VERSION;
 localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(safe));
+scheduleCloudArchiveSync();
 }
 
 function scheduleThreadSave() {
@@ -1385,6 +1386,7 @@ if (target) state.activeThreadId = target.id;
 writeWorkspaceMetadata();
 renderSidebar();
 renderChat();
+void restoreCloudArchive();
 } catch (error) {
 threadStorageReady = false;
 console.warn('OpenClaude is using browser storage because IndexedDB could not start:', error);
@@ -1418,7 +1420,106 @@ async function activateAccountWorkspace() {
   renderSidebar();
   renderChat();
   await initializeThreadStorage();
+  void loadCloudMemory();
 }
+let cloudArchiveTimer = null;
+let cloudArchiveSyncing = false;
+let userMemoryFacts = [];
+let memoryLoadedForAccount = '';
+function cloudStoreUrl(resource) {
+  const endpoint = normalizeWorkerUrl(state.workerUrl).replace(/\/chat\/completions\/?$/, '');
+  return endpoint + '/' + resource;
+}
+async function cloudStoreRequest(resource, method, payload) {
+  const credential = getGoogleCredential();
+  if (!credential) return null;
+  const response = await fetch(cloudStoreUrl(resource), {
+    method,
+    headers: { Authorization: 'Bearer ' + credential, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
+    body: payload ? JSON.stringify(payload) : undefined
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error?.message || 'Cloud memory sync failed.');
+  return data;
+}
+function makeCloudArchive() {
+  const threads = (Array.isArray(state.threads) ? state.threads : []).slice(-40).map(thread => ({
+    id: String(thread.id || ''),
+    title: String(thread.title || 'Conversation').slice(0, 160),
+    starred: Boolean(thread.starred),
+    updatedAt: Number(thread.updatedAt) || Date.now(),
+    messages: (Array.isArray(thread.messages) ? thread.messages : []).slice(-100).map(message => ({
+      role: message.role,
+      content: typeof message.content === 'string'
+        ? message.content.slice(0, 12000)
+        : Array.isArray(message.content)
+          ? message.content.filter(part => part && typeof part.text === 'string').map(part => part.text.slice(0, 12000)).join('\n')
+          : ''
+    })).filter(message => ['user','assistant'].includes(message.role))
+  }));
+  return { threads };
+}
+async function loadCloudMemory() {
+  const account = (googleAccountEmail || '').trim().toLowerCase();
+  if (!account || memoryLoadedForAccount === account) return;
+  try {
+    const data = await cloudStoreRequest('memory', 'GET');
+    if (account !== (googleAccountEmail || '').trim().toLowerCase()) return;
+    userMemoryFacts = Array.isArray(data?.memory?.facts) ? data.memory.facts.filter(fact => fact && typeof fact.text === 'string').slice(0, 100) : [];
+    memoryLoadedForAccount = account;
+  } catch (error) { console.warn('ULTRON memory load failed:', error.message); }
+}
+async function learnFromPrompt(text) {
+  const value = String(text || '').trim();
+  if (!value || !getGoogleCredential()) return;
+  // v1 learns only explicit, low-risk preference statements. It does not infer
+  // sensitive traits, secrets, health, politics, religion, or financial details.
+  if (/\b(health|medical|diagnos|medication|password|passcode|api key|bank account|credit card|politic|religion|sexual|orientation|ethnic|race)\b/i.test(value)) return;
+  const match = /^(?:please\s+)?(?:remember that\s+|i\s+(?:usually\s+)?(?:prefer|like|love|dislike|hate)\s+|always\s+|never\s+)(.{4,180})[.!?]*$/i.exec(value);
+  if (!match) return;
+  const factText = value.slice(0, 220);
+  const normalized = factText.toLowerCase();
+  if (userMemoryFacts.some(fact => String(fact.text || '').toLowerCase() === normalized)) return;
+  const next = [...userMemoryFacts, { id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), text: factText, category: 'preference', updatedAt: Date.now() }].slice(-100);
+  try {
+    await cloudStoreRequest('memory', 'PUT', { facts: next });
+    userMemoryFacts = next;
+    memoryLoadedForAccount = (googleAccountEmail || '').trim().toLowerCase();
+  } catch (error) { console.warn('ULTRON memory save failed:', error.message); }
+}
+function scheduleCloudArchiveSync() {
+  if (!getGoogleCredential() || !activeAccountEmail) return;
+  clearTimeout(cloudArchiveTimer);
+  cloudArchiveTimer = setTimeout(() => { void syncCloudArchive(); }, 1800);
+}
+async function syncCloudArchive() {
+  if (cloudArchiveSyncing || !getGoogleCredential() || !activeAccountEmail) return;
+  cloudArchiveSyncing = true;
+  try { await cloudStoreRequest('conversations', 'PUT', makeCloudArchive()); }
+  catch (error) { console.warn('ULTRON cloud archive sync failed:', error.message); }
+  finally { cloudArchiveSyncing = false; }
+}
+async function restoreCloudArchive() {
+  if (!getGoogleCredential() || !activeAccountEmail) return;
+  try {
+    const data = await cloudStoreRequest('conversations', 'GET');
+    const remote = Array.isArray(data?.conversations?.threads) ? data.conversations.threads : [];
+    if (!remote.length || activeAccountEmail !== (googleAccountEmail || '').trim().toLowerCase()) return;
+    const localIds = new Set((state.threads || []).map(thread => thread.id));
+    const restored = remote.filter(thread => thread && thread.id && !localIds.has(thread.id));
+    if (!restored.length) return;
+    state.threads = [...state.threads, ...restored].slice(-40);
+    if (!state.activeThreadId || !state.threads.some(thread => thread.id === state.activeThreadId)) state.activeThreadId = state.threads.at(-1)?.id || null;
+    if (threadStorageReady && threadDatabase) await writeThreadSnapshot(threadDatabase, state.threads);
+    writeWorkspaceMetadata();
+    renderSidebar();
+    renderChat();
+    showToast('Synced saved conversations');
+  } catch (error) {
+    console.warn('ULTRON cloud archive restore failed:', error.message);
+  }
+}
+
 function saveState() {
 if (!activeStorageKey) return;
 if (threadStorageReady) {
@@ -1432,6 +1533,7 @@ delete safe.accessToken; // keep the owner token in memory only; never persist i
 // keep ordinary chat history in localStorage but omit image bytes to avoid quota failures.
 if (Array.isArray(safe.threads)) safe.threads = safe.threads.map(thread => ({ ...thread, messages: (thread.messages || []).map(message => { const copy = { ...message }; delete copy.imageDataUrl; return copy; }) }));
 localStorage.setItem(activeStorageKey || STORAGE_KEY, JSON.stringify(safe));
+scheduleCloudArchiveSync();
 } catch (error) { console.warn('OpenClaude could not save local settings:', error); }
 }
 let selectedAttachments = [];
@@ -2333,6 +2435,22 @@ const retryMode = currentComposerMode;
 const attachments = selectedAttachments.slice();
 if (!prompt && !attachments.length) return;
 let explicitSkills = [];
+if (prompt === '/memory') {
+  showLocalCommandReply(userMemoryFacts.length
+    ? '**Saved ULTRON memories**\\n\\n' + userMemoryFacts.map((fact, index) => (index + 1) + '. ' + fact.text).join('\\n') + '\\n\\nUse /forget-memory followed by a phrase to remove a matching memory.'
+    : 'ULTRON has no saved preferences for this account yet. Start a message with “Remember that…” or “I prefer…” to teach it.');
+  input.value = ''; updateComposerAction(); return;
+}
+if (prompt.startsWith('/forget-memory')) {
+  const phrase = prompt.replace(/^\/forget-memory\s*/i, '').trim().toLowerCase();
+  const next = phrase ? userMemoryFacts.filter(fact => !String(fact.text || '').toLowerCase().includes(phrase)) : [];
+  try {
+    await cloudStoreRequest('memory', 'PUT', { facts: next });
+    userMemoryFacts = next;
+    showLocalCommandReply(phrase ? 'Removed matching memories.' : 'Cleared all saved memories for this account.');
+  } catch (error) { showLocalCommandReply('Could not update saved memory. Please try again.'); }
+  input.value = ''; updateComposerAction(); return;
+}
 if (prompt.startsWith('/')) {
   const parsed = window.SkillEngineUI.parseCommands(prompt);
   if (parsed.builtin) {
@@ -2382,6 +2500,7 @@ if (thread.messages.length === 0) thread.title = prompt.slice(0, 34);
 const attachmentNames = attachments.map(file => file.name);
 const savedPrompt = prompt || 'Please review the attached file(s).';
 const activation = window.SkillEngineUI.activateForTurn({ message: prompt, explicitSkills });
+void learnFromPrompt(prompt);
 const activeSkillCommands = activation.activeSkills.map(skill => skill.command);
 thread.messages.push({ role: 'user', content: savedPrompt, attachments: attachmentNames, ...(activeSkillCommands.length ? { skills: activeSkillCommands } : {}) });
 input.value = '';
@@ -2446,7 +2565,7 @@ const currentUserMessage = thread.messages[thread.messages.length - 1];
 const editIntent = attachments.some(file => file.kind === 'binary' && String(file.mimeType || '').startsWith('image/')) && /\b(edit|change|modify|adjust|retouch|enhance|restore|remove|replace|swap|add|erase|recolor|recolour|colorize|colourize|stylize|restyle|transform|turn|make|convert|fix|clean up|improve|background|cinematic|cartoon|anime|sketch|painting)\b/i.test(prompt);
 const preparedEditImages = editIntent ? await Promise.all(attachments.filter(file => file.kind === 'binary' && String(file.mimeType || '').startsWith('image/')).slice(0, 4).map(async file => ({ type: 'image_url', image_url: { url: await resizeImageDataUrlForEdit(file.dataUrl) } }))) : null;
 replyText = await requestWorkerReply(endpoint, [
-{ role: 'system', content: [state.systemPrompt, window.SkillEngineUI.buildSystemMessage(activation)].filter(Boolean).join('\n\n') },
+{ role: 'system', content: [state.systemPrompt, userMemoryFacts.length ? 'USER PREFERENCES (saved from explicit instructions; apply only when relevant):\n' + userMemoryFacts.map(fact => '- ' + fact.text).join('\n') : '', window.SkillEngineUI.buildSystemMessage(activation)].filter(Boolean).join('\n\n') },
 ...requestHistory.map((m) => {
 const isLatestUser = m === currentUserMessage && m.role === 'user';
 if (!isLatestUser) return { role: m.role, content: m.content };
