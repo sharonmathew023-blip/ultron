@@ -1,80 +1,104 @@
 # ULTRON
 
-A browser-based AI workspace with a responsive chat interface, conversation history, skills, HTML artifact previews, and a Cloudflare Worker backend.
+A browser-based AI chat app with two modes: **Chat** and **Research**. It includes Google sign-in, streaming responses, conversation history, per-account memory, imported skills, and sandboxed HTML artifact previews.
 
 **Live app:** https://sharonmathew023-blip.github.io/ultron/
 
-## Features
+## Modes
 
-- Responsive chat interface for desktop and mobile.
-- Conversation creation, search, deletion, and browser-local history with signed-in KV archive sync.
-- Dark and light themes.
-- Streaming AI responses through an OpenAI-compatible Worker endpoint.
-- Google sign-in verified by the Worker.
-- Per-account and per-IP rate limiting.
-- Model fallback, bounded retries, and KV-backed cooldown handling.
-- Per-account persistent conversation archives and explicit preference memory (`/memory`, `/forget-memory`).
-- Research-mode Google Search grounding with clickable source links.
-- Built-in and imported skills with validation.
-- Owner-gated connected-app integrations.
-- Sandboxed HTML artifact preview, code view, and download.
-- JSON conversation export.
+- **Chat:** everyday questions, writing, coding, and creative work.
+- **Research:** Google Search grounding with clickable source links.
+
+The browser sends abstract intelligence tiers. Provider model IDs, API keys, routing, retries, and fallback stay in the Worker.
 
 ## Architecture
 
 | File | Responsibility |
 | --- | --- |
-| `index.html`, `styles.css` | Application interface |
+| `index.html`, `styles.css` | Responsive browser interface |
+| `modes.js` | Server-owned Chat and Research prompts |
 | `skill-rules.js`, `skill-engine.js`, `builtin-skills.js` | Skill parsing, validation, activation, and UI |
-| `worker.js` | API, authentication, rate limiting, AI streaming, fallback, per-user KV memory/archive, telemetry, and owner-only integrations |
-| `wrangler.toml` | Cloudflare Worker configuration |
-| `worker.test.mjs`, `tests/` | Automated tests |
+| `worker.js` | Authentication, rate limits, AI routing, streaming, citations, fallback, memory/archive APIs, telemetry, owner-only integrations |
+| `wrangler.toml` | Cloudflare Worker bindings and public configuration |
+| `worker.test.mjs`, `tests/` | Worker, security, UI, retry, and mode regression tests |
 
 ## Run locally
 
-Use Node.js 20+ for the test suite. Serve the frontend from the repository root:
+Requirements: Node.js 22+ and Python 3.
 
 ```bash
 python -m http.server 8000
 ```
 
-Open http://localhost:8000.
+Open http://localhost:8000. Google sign-in and AI requests still need the hosted Worker and a valid OAuth client configuration.
 
-Run tests:
+Run the complete test suite:
 
 ```bash
+node --check worker.js
+node tests/inline-scripts.test.mjs
+node tests/skill-engine.test.mjs
+node tests/security.test.mjs
 node --test worker.test.mjs
-node --test tests/*.test.mjs
+node --test tests/composer-regression.test.mjs
+node --test modes.test.mjs
+node --test tests/client-timeout.test.mjs
+node --test identity.test.mjs
 ```
 
-The hosted chat backend still depends on the configured Cloudflare Worker services and secrets.
+## Deploy the Worker
 
-## Worker configuration
+Install Wrangler and authenticate to the Cloudflare account:
 
-Set secrets in Cloudflare. Never commit provider keys or consumer credentials.
+```bash
+npm install --global wrangler
+wrangler login
+```
 
-- `GEMINI_API_KEY`
-- `GOOGLE_CLIENT_ID`
-- `ULTRON_OWNER_EMAIL` for owner-only features
-- `COMPOSIO_API_KEY` for connected-app integration
+Set secrets. Never put provider credentials in browser code or commit them:
 
-Configure rate-limiter bindings and the optional `ULTRON_STATE` KV namespace as described in `wrangler.toml`. Set `ALLOWED_ORIGINS` to the exact production origin when restricting browser access.
+```bash
+wrangler secret put GEMINI_API_KEY
+wrangler secret put ULTRON_OWNER_EMAIL
+wrangler secret put COMPOSIO_API_KEY
+```
 
-## Security notes
+The `ULTRON_STATE` KV namespace, Workers AI binding, rate-limit bindings, Google OAuth client ID, and default model settings are declared in `wrangler.toml`. Confirm the namespace and rate-limit IDs belong to the target Cloudflare account before deploying.
 
-- The Worker verifies Google ID tokens. Frontend state is not an authentication boundary.
-- Imported skills are untrusted input and must pass validation.
-- Connected tools are owner-gated and restricted by the Worker.
-- Generated HTML must remain isolated in a sandboxed preview.
-- Keep all service-role keys and provider secrets out of browser code and Git history.
+Deploy from the repository root:
+
+```bash
+wrangler deploy
+```
+
+For GitHub Pages, configure the repository's Pages source to deploy from `main` and the repository root. Every successful push to `main` triggers the Pages workflow.
+
+## Memory and privacy
+
+- Signed-in conversation archives and explicit preference facts are scoped to the verified Google subject ID.
+- Use `/memory` to inspect saved preference facts.
+- Use `/forget-memory [phrase]` to remove matching facts. Use `/forget-memory` alone to clear all saved facts.
+- Cloud archives are text-only; binary attachments remain local.
+- Memory v1 stores explicit low-risk preferences only. It does not infer sensitive traits.
+- Cloud sync needs the `ULTRON_STATE` KV binding. Local conversation history remains available if cloud sync fails.
+
+## Security
+
+- The Worker verifies Google ID tokens; browser state is not an authentication boundary.
+- Provider keys and owner credentials remain Worker secrets.
+- Public chat is rate-limited per account and IP.
+- Retry attempts are bounded across the provider chain.
+- Imported skills are untrusted and must pass validation.
+- Generated HTML runs in a sandboxed preview.
+- Worker logs contain operational metadata, not prompts, tokens, or account emails.
 
 ## Known limitations
 
-- Cloud archive sync requires a valid Google sign-in and the `ULTRON_STATE` KV binding. The browser keeps a local copy if cloud sync is unavailable.
-- Cloud conversation archives are text-only; binary attachments and generated image bytes remain local.
-- Memory v1 stores explicit low-risk preference statements only. Use `/memory` to inspect and `/forget-memory [phrase]` to delete matching facts; `/forget-memory` alone clears all saved facts.
-- Demo mode is a UI preview, not an offline AI model.
-- Available models depend on the configured provider account and Worker settings.
+- Research citations are available only when Google Search grounding succeeds. Backup providers cannot claim live source verification.
+- The demo link above opens the live app; a recorded animated demo GIF has not yet been added.
+- Cloud conversation archives are bounded and text-only. They are not an unlimited raw transcript store.
+- Connected-app tools remain owner-only.
+- Available intelligence tiers depend on the model IDs configured in Cloudflare Worker variables.
 
 ## License
 
