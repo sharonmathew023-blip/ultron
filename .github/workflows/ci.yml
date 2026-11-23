@@ -34,3 +34,5 @@ jobs:
         run: node --test tests/client-timeout.test.mjs
       - name: Run identity regression tests
         run: node --test identity.test.mjs
+      - name: Run device registry tests
+        run: node --test tests/device-registry.test.mjs
