@@ -49,3 +49,10 @@ test("Cloudflare Worker injects the core identity after its mode prompt", () => 
   assert.match(worker, /import \{ applyUltronIdentity \} from \"\.\/identity\.js\"/);
   assert.match(worker, /const activeMode = applyMode\(input\);\s*applyUltronIdentity\(input\)/);
 });
+
+
+test("ULTRON matches the user's language and script", () => {
+  assert.match(ULTRON_IDENTITY_PROMPT, /same language and script as the user's latest message/i);
+  assert.match(ULTRON_IDENTITY_PROMPT, /Manglish.*Latin letters/i);
+  assert.match(ULTRON_IDENTITY_PROMPT, /Hindi gets Hindi/i);
+});
