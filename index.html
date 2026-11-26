@@ -2662,9 +2662,9 @@ statusEl.textContent = 'Engine: Stopped';
 } else {
 isError = true;
 const failureText = String(error && error.message || '');
-const accountOrLimitFailure = /\\b401\\b|\\b403\\b|\\b429\\b|sign.?in|rate.?limit|message limit|unauthorized|forbidden|quota|billing/i.test(failureText);
-const actionableInputFailure = /\\b413\\b|payload too large|request too long|conversation too long|context length|too many tokens|invalid request|missing|required|not configured|worker url|failed to fetch|network|cors|unsupported|permission/i.test(failureText);
-const isSubstantialTask = prompt.length >= 350 || (prompt.length >= 160 && /\\b(build|implement|develop|create|design|write|generate|analyze|research|refactor|debug|automate|plan|complete)\\b/i.test(prompt)) || /\\b(full project|entire project|whole codebase|multi[- ]step|step[- ]by[- ]step|from scratch|large task)\\b/i.test(prompt);
+const accountOrLimitFailure = /\b401\b|\b403\b|\b429\b|sign.?in|rate.?limit|message limit|unauthorized|forbidden|quota|billing/i.test(failureText);
+const actionableInputFailure = /\b413\b|payload too large|request too long|conversation too long|context length|too many tokens|invalid request|missing|required|not configured|worker url|failed to fetch|network|cors|unsupported|permission/i.test(failureText);
+const isSubstantialTask = prompt.length >= 350 || (prompt.length >= 160 && /\b(build|implement|develop|create|design|write|generate|analyze|research|refactor|debug|automate|plan|complete)\b/i.test(prompt)) || /\b(full project|entire project|whole codebase|multi[- ]step|step[- ]by[- ]step|from scratch|large task)\b/i.test(prompt);
 if (accountOrLimitFailure || actionableInputFailure) {
   replyText = failureText || "**Couldn't complete the request**\\n\\nPlease check your sign-in, usage limit, or request details and try again.";
 } else if (isSubstantialTask) {
