@@ -26,12 +26,13 @@ test("desktop Enter sends, Shift+Enter inserts a newline, and mobile Enter stays
 
 
 test("large-task failures use ULTRON's Malayalam line while actionable errors remain useful", () => {
-  assert.match(html, /const accountOrLimitFailure = .*\\\\b401\\\\b.*\\\\b403\\\\b.*\\\\b429\\\\b/);
-  assert.match(html, /const actionableInputFailure = .*\\\\b413\\\\b.*conversation too long.*context length/i);
-  assert.match(html, /const isSubstantialTask = prompt\\.length >= 350/);
-  assert.match(html, /else if \\(isSubstantialTask\\) \\{[\\s\\S]{0,140}Ith ennekond koottiyal koodilla koodiyal koodilla koodilla/);
-  assert.match(html, /Send your message again to retry, or open Settings to check the Worker URL/);
-  assert.match(html, /e\\.timeout = true/);
+  assert.ok(html.includes("const accountOrLimitFailure = /\\b401\\b|\\b403\\b|\\b429\\b"));
+  assert.ok(html.includes("const actionableInputFailure = /\\b413\\b"));
+  assert.ok(html.includes("const isSubstantialTask = prompt.length >= 350"));
+  assert.match(html, /else if \(isSubstantialTask\) \{[\s\S]{0,200}Ith ennekond koottiyal koodilla mone, nee ChatGPT aduth choyich nokk/);
+  assert.ok(html.includes("conversation too long"));
+  assert.ok(html.includes("Send your message again to retry, or open Settings to check the Worker URL"));
+  assert.match(html, /e\.timeout = true/);
 });
 
 
