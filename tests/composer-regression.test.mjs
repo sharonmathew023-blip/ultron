@@ -25,9 +25,9 @@ test("desktop Enter sends, Shift+Enter inserts a newline, and mobile Enter stays
 });
 
 
-test("the friendly creator message is used only for the 60-second idle timeout", () => {
-  assert.match(html, /error && error\.timeout\s*\?\s*`I don't know the answer bro\\njust google it 🫩\\n\\nmy creator will fix this problem\\n\( that's what he said\)`/);
-  assert.match(html, /:\s*`\*\*Couldn't get a reply\*\*/);
+test("request failures use ULTRON's Malayalam catchphrase while account and limit errors stay actionable", () => {
+  assert.match(html, /const accountOrLimitFailure = .*\\b401\\b.*\\b403\\b.*\\b429\\b/);
+  assert.match(html, /accountOrLimitFailure\s*\?[\s\S]{0,220}Ith ennekond koottiyal koodilla mone, nee ChatGPT aduth choyich nokk/);
   assert.match(html, /e\.timeout = true/);
 });
 
