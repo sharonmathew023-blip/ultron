@@ -2059,7 +2059,10 @@ document.getElementById('artifactCode').textContent = state.activeArtifact.code;
 function openArtifactInNewTab() {
   const code = state.activeArtifact && state.activeArtifact.code;
   if (!code) return;
-  const blob = new Blob([code], { type: 'text/html;charset=utf-8' });
+  // Blob URLs inherit the creator's origin; export through an opaque sandbox.
+  const escapedCode = String(code).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const wrapper = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ULTRON Artifact</title><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${escapedCode}"></iframe></body></html>`;
+  const blob = new Blob([wrapper], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -2186,7 +2189,7 @@ async function readWorkerReply(response, onChunk, onActivity) {
     failure.modelGone = isModelProblem(response.status, message);
     throw failure;
   }
-  lastReplyModel = response.headers.get('x-ultron-model') || '';
+  lastReplyModel = ''; // Provider/model metadata is intentionally not exposed to the UI.
   if ((response.headers.get('content-type') || '').toLowerCase().startsWith('image/')) {
     const blob = await response.blob();
     if (!blob.size) throw new Error('The image response was empty.');
@@ -2198,7 +2201,7 @@ async function readWorkerReply(response, onChunk, onActivity) {
     const body = await response.text();
     try {
       const data = JSON.parse(body);
-      if (typeof data.model === 'string' && data.model) lastReplyModel = data.model;
+
       const content = data.choices?.[0]?.message?.content ?? data.response ?? data.content;
       if (typeof content === 'string' && content.trim()) { if (onChunk) onChunk(content); return content; }
     } catch (_) {}
@@ -2218,7 +2221,7 @@ async function readWorkerReply(response, onChunk, onActivity) {
     let event;
     try { event = JSON.parse(payload); } catch (_) { return; }
     if (event.error) throw streamError(event.error);
-    if (typeof event.model === 'string' && event.model) lastReplyModel = event.model;
+
     const piece = event.choices?.[0]?.delta?.content ?? event.choices?.[0]?.message?.content ?? event.choices?.[0]?.text ?? event.response ?? '';
     if (typeof piece === 'string' && piece) {
       full += piece;

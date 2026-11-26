@@ -32,6 +32,8 @@ const DEFAULT_MODEL = "gemini-3.5-flash"; // 3.8-flash answers 503 for days at a
 const DEFAULT_FALLBACKS = "gemini-3.6-flash,gemini-flash-lite-latest";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const PUBLIC_MODEL_ID = "ultron";
+const PUBLIC_IMAGE_MODEL_ID = "ultron-image";
 const GROQ_MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const MAX_BODY_BYTES = 12_000_000;
 const MAX_PAGE_BYTES = 2_000_000;
@@ -213,20 +215,12 @@ export default {
       if (modelListCache.data && modelListCache.expiresAt > Date.now()) {
         return reply(modelListCache.data, 200, { "Cache-Control": "public, max-age=300" });
       }
-      let ids = buildModelChain(String(env.DEFAULT_MODEL || DEFAULT_MODEL), env);
-      if (env.GEMINI_API_KEY) {
-        try { // ask Google which models your key can really use right now
-          const res = await fetch(`${GEMINI_BASE}/models?pageSize=100`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY }, signal: AbortSignal.timeout(8000) });
-          if (res.ok) {
-            const j = await res.json();
-            const live = (j.models || [])
-              .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
-              .map((m) => String(m.name).replace(/^models\//, ""));
-            if (live.length) ids = live;
-          }
-        } catch { /* keep the static list */ }
-      }
-      const data = { object: "list", data: [...new Set(ids)].map((id) => ({ id, object: "model" })) };
+      // Publish ULTRON tiers only. Provider IDs and availability remain server-side.
+      const data = { object: "list", data: [
+        { id: "ultron-auto", object: "model" },
+        { id: "ultron-fast", object: "model" },
+        { id: "ultron-reasoning", object: "model" },
+      ] };
       modelListCache = { data, expiresAt: Date.now() + MODEL_LIST_CACHE_MS };
       return reply(data, 200, { "Cache-Control": "public, max-age=300" });
     }
@@ -290,6 +284,7 @@ export default {
     applyUltronIdentity(input); // append last so the core identity has final system-prompt priority
 
     const requestedModel = String(input.model || "auto").trim();
+    const requestedTier = ({ "ultron-auto": "auto", "ultron-fast": "fast", "ultron-reasoning": "reasoning" })[requestedModel] || requestedModel;
     const route = classifyRequest(input.messages);
     const automaticModel = route === "fast"
       ? String(env.FAST_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
@@ -297,11 +292,11 @@ export default {
         ? String(env.REASONING_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
         : String(env.DEFAULT_MODEL || DEFAULT_MODEL);
     // The browser sends only an abstract tier. Actual provider model IDs stay server-side.
-    const selectedModel = requestedModel === "reasoning"
+    const selectedModel = requestedTier === "reasoning"
       ? String(env.REASONING_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
-      : requestedModel === "fast"
+      : requestedTier === "fast"
         ? String(env.FAST_MODEL || env.DEFAULT_MODEL || DEFAULT_MODEL)
-        : requestedModel === "auto" ? automaticModel : requestedModel;
+        : requestedTier === "auto" ? automaticModel : requestedTier;
     const model = selectedModel.replace(/^models\//, "");
     if (!MODEL_RE.test(model)) return fail(400, "Invalid model name.");
 
@@ -335,7 +330,7 @@ export default {
         if (!bytes || !bytes.byteLength) throw new Error("FLUX.2 Klein returned an unsupported image payload.");
         return new Response(bytes, {
           status: 200,
-          headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": "flux-2-klein-4b", "X-ULTRON-Image-Action": "edit", "X-ULTRON-Image-Prompt": encodeURIComponent(imageEditRequest.prompt) },
+          headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": PUBLIC_IMAGE_MODEL_ID, "X-ULTRON-Image-Action": "edit", "X-ULTRON-Image-Prompt": encodeURIComponent(imageEditRequest.prompt) },
         });
       } catch (error) {
         console.warn("[ultron] FLUX.2 Klein image edit failed: " + redact(error && error.message || "unknown error").slice(0, 180));
@@ -359,7 +354,7 @@ export default {
         if (!bytes || !bytes.byteLength) throw new Error("FLUX returned an unsupported image payload.");
         return new Response(bytes, {
           status: 200,
-          headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": "flux-1-schnell", "X-ULTRON-Image-Prompt": encodeURIComponent(imageRequest.prompt) },
+          headers: { ...cors.headers, "Content-Type": "image/jpeg", "Content-Length": String(bytes.byteLength), "Cache-Control": "no-store", "X-ULTRON-Image-Model": PUBLIC_IMAGE_MODEL_ID, "X-ULTRON-Image-Prompt": encodeURIComponent(imageRequest.prompt) },
         });
       } catch (error) {
         console.warn("[ultron] FLUX image generation failed: " + redact(error && error.message || "unknown error").slice(0, 180));
@@ -374,7 +369,7 @@ export default {
       try {
         const agentReply = await runComposioToolAgent(input, model, env, skillAccess, ctx);
         return new Response(toStaticOpenAIStream(agentReply.text, agentReply.model), {
-          headers: { ...cors.headers, "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "X-ULTRON-Model": agentReply.model },
+          headers: { ...cors.headers, "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "X-ULTRON-Model": PUBLIC_MODEL_ID },
         });
       } catch (error) {
         return fail(502, error.message || "Connected tool execution failed.");
@@ -398,13 +393,13 @@ export default {
           const backup = await callGroqFallback(backupInput, env, backupMs);
           if (backup.res) {
             logWorkerEvent("chat.completed", { route, provider: "groq", model: backup.model, latencyMs: Date.now() - chatStarted, fallback: true });
-            return new Response(backup.res.body, {
+            return new Response(toPublicOpenAIStream(backup.res.body), {
               headers: {
                 ...cors.headers,
                 "Content-Type": "text/event-stream; charset=utf-8",
                 "Cache-Control": "no-cache, no-transform",
                 "X-Accel-Buffering": "no",
-                "X-ULTRON-Model": "groq/" + backup.model,
+                "X-ULTRON-Model": PUBLIC_MODEL_ID,
                 "X-ULTRON-Fallback": "provider",
                 "X-ULTRON-Route": route,
               },
@@ -422,7 +417,7 @@ export default {
               "Content-Type": "text/event-stream; charset=utf-8",
               "Cache-Control": "no-cache, no-transform",
               "X-Accel-Buffering": "no",
-              "X-ULTRON-Model": cloudflare.model,
+              "X-ULTRON-Model": PUBLIC_MODEL_ID,
               "X-ULTRON-Fallback": "provider",
               "X-ULTRON-Route": route,
             },
@@ -447,7 +442,7 @@ export default {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
         "X-Accel-Buffering": "no",
-        "X-ULTRON-Model": result.model,
+        "X-ULTRON-Model": PUBLIC_MODEL_ID,
         "X-ULTRON-Fallback": result.model === chain[0] ? "false" : "true",
         "X-ULTRON-Route": route,
       },
@@ -765,11 +760,47 @@ async function readPublicPageForAgent(value) {
   const page=extractPageText(source,type);
   return { url:target.toString(), title:page.title, content:page.content.slice(0,14000) };
 }
+function toPublicOpenAIStream(upstreamBody) {
+  if (!upstreamBody) return new ReadableStream({ start(controller) { controller.close(); } });
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  const publicLine = (line) => {
+    if (!line.startsWith("data:")) return line + "\n";
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") return line + "\n";
+    try {
+      const frame = JSON.parse(payload);
+      if (frame && typeof frame === "object" && Object.prototype.hasOwnProperty.call(frame, "model")) frame.model = PUBLIC_MODEL_ID;
+      return "data: " + JSON.stringify(frame) + "\n";
+    } catch { return line + "\n"; }
+  };
+  return new ReadableStream({
+    async pull(controller) {
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        if (lines.length) controller.enqueue(encoder.encode(lines.map(publicLine).join("")));
+        if (done) {
+          if (buffer) controller.enqueue(encoder.encode(publicLine(buffer)));
+          controller.close();
+          return;
+        }
+        if (lines.length) return;
+      }
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  });
+}
+
 function toStaticOpenAIStream(text, model) {
   const encoder=new TextEncoder(), id="chatcmpl-"+crypto.randomUUID(), created=Math.floor(Date.now()/1000);
   const frames=[
-    {id,object:"chat.completion.chunk",created,model,choices:[{index:0,delta:{role:"assistant",content:text},finish_reason:null}]},
-    {id,object:"chat.completion.chunk",created,model,choices:[{index:0,delta:{},finish_reason:"stop"}]},
+    {id,object:"chat.completion.chunk",created,model:PUBLIC_MODEL_ID,choices:[{index:0,delta:{role:"assistant",content:text},finish_reason:null}]},
+    {id,object:"chat.completion.chunk",created,model:PUBLIC_MODEL_ID,choices:[{index:0,delta:{},finish_reason:"stop"}]},
   ];
   const body=frames.map(frame=>"data: "+JSON.stringify(frame)+"\n\n").join("")+"data: [DONE]\n\n";
   return new ReadableStream({start(controller){controller.enqueue(encoder.encode(body));controller.close();}});
@@ -1216,7 +1247,7 @@ async function callGemini(chain, body, apiKey, health) {
     // A model that is resting gets one quick try as a last resort, not a full set of retries.
     const attempts = health.isResting(model) ? 1 : ATTEMPTS_PER_MODEL;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      if (totalAttempts >= MAX_TOTAL_GEMINI_ATTEMPTS) return { error: busyError(tried, last) };
+      if (totalAttempts >= MAX_TOTAL_GEMINI_ATTEMPTS) return { error: busyError(last) };
       totalAttempts++;
       const left = TOTAL_BUDGET_MS - (Date.now() - started);
       if (left < MIN_ATTEMPT_MS) return { error: busyError(tried, last) };
@@ -1253,12 +1284,11 @@ async function callGemini(chain, body, apiKey, health) {
 }
 
 // Every model in the chain is busy: say that once, instead of echoing one model's error.
-function busyError(tried, last) {
+function busyError(last) {
   const status = last && last.status === 429 ? 429 : last && last.status === 504 ? 504 : 503;
-  const reason = redact((last && last.message) || "The model is busy.").slice(0, 200);
   return {
     status,
-    message: `Google's models are busy right now, so this Worker could not get an answer (tried ${tried.join(", ")}). Last error: ${reason} Please try again in a moment.`,
+    message: "ULTRON's AI providers are busy right now. Please try again in a moment.",
     retryAfter: (last && last.retryAfter) || "10",
   };
 }
@@ -1292,7 +1322,7 @@ function toOpenAIStream(upstreamBody, model) {
 
   const frame = (obj) => enc.encode(`data: ${JSON.stringify(obj)}\n\n`);
   const chunk = (delta, finishReason = null) =>
-    frame({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finishReason }] });
+    frame({ id, object: "chat.completion.chunk", created, model: PUBLIC_MODEL_ID, choices: [{ index: 0, delta, finish_reason: finishReason }] });
   const errorFrame = (code, message) => frame(errorBody(code, message));
 
   function handle(line, ctl) {
