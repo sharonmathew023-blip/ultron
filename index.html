@@ -947,6 +947,19 @@ button:focus-visible,.ultron-tier-trigger:focus-visible{outline:2px solid var(--
 @media(prefers-reduced-motion:reduce){.ultron-tier-trigger>svg{transition:none}}
 </style>
 
+
+<style id="ultron-personality-themes">
+html[data-personality="unhinged"]{--bg-canvas:#09090b;--bg-surface:#121216;--bg-elevated:#1d1b21;--bg-input:#101014;--text-primary:#f4f4f5;--text-secondary:#b6b6bf;--text-muted:#777781;--border-hairline:#38323c;--accent-terracotta:#ff3158;--accent-hover:#ff5474;--accent-ink:#ff7893;--user-bubble:#21151d;--on-accent:#fff}
+html[data-theme="light"][data-personality="unhinged"]{--bg-canvas:#09090b;--bg-surface:#121216;--bg-elevated:#1d1b21;--bg-input:#101014;--text-primary:#f4f4f5;--text-secondary:#b6b6bf;--text-muted:#777781;--border-hairline:#38323c;--accent-terracotta:#ff3158;--accent-hover:#ff5474;--accent-ink:#ff7893;--user-bubble:#21151d}
+html[data-personality="unhinged"] .send-btn{background:#ff3158!important;color:#fff!important;box-shadow:0 0 0 1px rgba(255,49,88,.2),0 7px 24px rgba(255,49,88,.22)!important}
+html[data-personality="unhinged"] .hero-spark{background:rgba(255,49,88,.13);color:#ff5474}
+html[data-personality="unhinged"] .topbar{border-bottom-color:rgba(255,49,88,.28)}
+html[data-personality="unhinged"] .composer-box:focus-within{border-color:#ff3158;box-shadow:0 0 0 3px rgba(255,49,88,.16),0 12px 34px rgba(255,49,88,.1)}
+html[data-personality="unhinged"] body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:.035;background:repeating-linear-gradient(to bottom,transparent 0px,transparent 3px,#ff3158 4px,transparent 5px);mix-blend-mode:screen}
+.personality-mode-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px;border:1px solid var(--border-hairline);border-radius:14px;background:var(--bg-surface)}
+.personality-mode-copy{display:flex;flex-direction:column;gap:6px;min-width:0}.personality-mode-copy>label{font-weight:650;color:var(--text-primary);cursor:pointer}.personality-mode-copy p{font-size:.78rem;line-height:1.5;color:var(--text-secondary);max-width:360px}.personality-mode-status{font:700 .65rem var(--font-mono);letter-spacing:.12em;color:var(--accent-terracotta)}
+.personality-switch{position:relative;display:inline-flex;flex:0 0 50px;width:50px;height:29px;cursor:pointer}.personality-switch input{position:absolute;width:1px;height:1px;opacity:0}.personality-switch-track{position:absolute;inset:0;border-radius:999px;background:var(--bg-elevated);border:1px solid var(--border-hairline);transition:background .2s,border-color .2s}.personality-switch-track:before{content:"";position:absolute;width:21px;height:21px;left:3px;top:3px;border-radius:50%;background:var(--text-muted);transition:transform .2s,background .2s}.personality-switch input:checked+.personality-switch-track{background:rgba(255,49,88,.18);border-color:#ff3158}.personality-switch input:checked+.personality-switch-track:before{transform:translateX(21px);background:#ff3158}.personality-switch input:focus-visible+.personality-switch-track{outline:3px solid color-mix(in srgb,#ff3158 45%,transparent);outline-offset:3px}
+</style>
 </head>
 <body>
 <div class="app-shell">
@@ -1052,6 +1065,12 @@ ULTRON sends requests to your Cloudflare Worker. Keep GEMINI_API_KEY in Cloudfla
 <input type="text" id="workerUrlInput" value="https://openclaude-api.sharonmathew023.workers.dev/chat/completions" />
 </div>
 <p style="font-size:0.78rem;color:var(--text-muted);">Private connector tools are available only to the ULTRON owner account after Google sign-in.</p>
+<div class="field-group ultron-personality-setting">
+<div class="personality-mode-row">
+<div class="personality-mode-copy"><label for="unhingedModeToggle">ULTRON Personality</label><p>Normal mode keeps ULTRON composed. Unhinged mode unlocks the chaos and changes the chat theme.</p><span id="personalityModeStatus" class="personality-mode-status">NORMAL MODE</span></div>
+<label class="personality-switch" aria-label="Enable Unhinged ULTRON"><input type="checkbox" id="unhingedModeToggle"><span class="personality-switch-track"></span></label>
+</div>
+</div>
 <div class="field-group">
 <label>Project System Prompt</label>
 <textarea id="sysPromptInput" rows="3">You are ULTRON, a helpful, concise AI assistant.</textarea>
@@ -1237,6 +1256,7 @@ search: '',
 workerUrl: 'https://openclaude-api.sharonmathew023.workers.dev/chat/completions',
 composioSessionId: '',
 model: 'auto',
+unhingedMode: false,
 systemPrompt: 'You are ULTRON, a helpful, concise AI assistant.',
 customSkills: [],
 skills: [],
@@ -1550,6 +1570,7 @@ function renderSkillList() {
 
 function applyTheme() {
 document.documentElement.setAttribute('data-theme', state.theme);
+document.documentElement.setAttribute('data-personality', state.unhingedMode ? 'unhinged' : 'normal');
 const dark = state.theme === 'dark';
 document.getElementById('themeLabel').textContent = dark ? 'Dark' : 'Light';
 const button = document.getElementById('themeToggleBtn');
@@ -2360,7 +2381,7 @@ const model = models[index];
 onStatus(index === 0 ? `Connecting to ${model}…` : `Switching to ${model}…`);
 for (let attempt = 0; ; attempt++) {
 try {
-return await requestOnce(endpoint, { model, stream: true, messages, ...(webSearchEnabled ? { web_search: true } : {}), ...(currentComposerMode !== 'chat' ? { mode: currentComposerMode } : {}), ...(toolSessionId !== null && toolSessionId !== undefined ? { composioSessionId: typeof toolSessionId === 'string' ? toolSessionId : '', enableTools: true } : {}), ...(Array.isArray(skillManifest) && skillManifest.length ? { skills: skillManifest } : {}) }, signal, emitChunk);
+return await requestOnce(endpoint, { model, stream: true, messages, ...(webSearchEnabled ? { web_search: true } : {}), ...(currentComposerMode !== 'chat' ? { mode: currentComposerMode } : {}), ...(toolSessionId !== null && toolSessionId !== undefined ? { composioSessionId: typeof toolSessionId === 'string' ? toolSessionId : '', enableTools: true } : {}), ultron_personality: state.unhingedMode ? 'unhinged' : 'normal', ...(Array.isArray(skillManifest) && skillManifest.length ? { skills: skillManifest } : {}) }, signal, emitChunk);
 } catch (error) {
 if (error.stopped || emittedAnyText) throw error;
 lastError = error;
@@ -2773,6 +2794,10 @@ document.getElementById('tabPreviewBtn').classList.remove('active');
 document.getElementById('openSettingsBtn').addEventListener('click', () => {
 document.getElementById('workerUrlInput').value = state.workerUrl;
 document.getElementById('sysPromptInput').value = state.systemPrompt;
+const personalityToggle = document.getElementById('unhingedModeToggle');
+if (personalityToggle) personalityToggle.checked = Boolean(state.unhingedMode);
+const personalityStatus = document.getElementById('personalityModeStatus');
+if (personalityStatus) personalityStatus.textContent = state.unhingedMode ? 'UNHINGED MODE ACTIVE' : 'NORMAL MODE';
 renderSkillList();
 document.getElementById('settingsModal').classList.add('open');
 });
@@ -2835,9 +2860,18 @@ document.getElementById('googleSignOutBtn').addEventListener('click', async () =
 });
 function closeSettingsModal(){document.getElementById('settingsModal').classList.remove('open');}
 document.getElementById('settingsCloseBtn').addEventListener('click',closeSettingsModal);
+document.getElementById('unhingedModeToggle').addEventListener('change', event => {
+  state.unhingedMode = event.target.checked;
+  const status = document.getElementById('personalityModeStatus');
+  if (status) status.textContent = state.unhingedMode ? 'UNHINGED MODE ACTIVE' : 'NORMAL MODE';
+  applyTheme();
+  saveState();
+});
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
   state.workerUrl = document.getElementById('workerUrlInput').value.trim() || defaultState.workerUrl;
     state.systemPrompt = document.getElementById('sysPromptInput').value.trim() || defaultState.systemPrompt;
+  state.unhingedMode = Boolean(document.getElementById('unhingedModeToggle')?.checked);
+  applyTheme();
   document.getElementById('providerBadge').textContent = 'Worker';
   saveState();
   closeSettingsModal();
