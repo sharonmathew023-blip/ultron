@@ -16,6 +16,12 @@ test("core identity is injected once and remains server-owned", () => {
   assert.match(ULTRON_IDENTITY_PROMPT, /Cloudflare KV/);
 });
 
+test("ULTRON includes its custom inappropriate-content and large-task catchphrases", () => {
+  assert.match(ULTRON_IDENTITY_PROMPT, /Ninte uddesham enikku manassilayi, ath ivide nadakilla/);
+  assert.match(ULTRON_IDENTITY_PROMPT, /Ith ennekond koottiyal koodilla mone, nee ChatGPT aduth choyich nokk/);
+  assert.match(ULTRON_IDENTITY_PROMPT, /Do not use that catchphrase for legitimate sexual-health/i);
+});
+
 test("identity composes with server-owned modes and survives Groq backup conversion", () => {
   const input = { mode: "research", messages: [{ role: "user", content: "Explain ULTRON" }] };
   assert.equal(applyMode(input), "research");

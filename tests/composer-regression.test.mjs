@@ -25,9 +25,13 @@ test("desktop Enter sends, Shift+Enter inserts a newline, and mobile Enter stays
 });
 
 
-test("the friendly creator message is used only for the 60-second idle timeout", () => {
-  assert.match(html, /error && error\.timeout\s*\?\s*`I don't know the answer bro\\njust google it 🫩\\n\\nmy creator will fix this problem\\n\( that's what he said\)`/);
-  assert.match(html, /:\s*`\*\*Couldn't get a reply\*\*/);
+test("large-task failures use ULTRON's Malayalam line while actionable errors remain useful", () => {
+  assert.ok(html.includes("const accountOrLimitFailure = /\\b401\\b|\\b403\\b|\\b429\\b"));
+  assert.ok(html.includes("const actionableInputFailure = /\\b413\\b"));
+  assert.ok(html.includes("const isSubstantialTask = prompt.length >= 350"));
+  assert.match(html, /else if \(isSubstantialTask\) \{[\s\S]{0,200}Ith ennekond koottiyal koodilla mone, nee ChatGPT aduth choyich nokk/);
+  assert.ok(html.includes("conversation too long"));
+  assert.ok(html.includes("Send your message again to retry, or open Settings to check the Worker URL"));
   assert.match(html, /e\.timeout = true/);
 });
 
