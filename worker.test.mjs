@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest, userStoreKey, validateUserMemory, validateConversationArchive };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, toPublicOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest, userStoreKey, validateUserMemory, validateConversationArchive };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
@@ -255,7 +255,7 @@ test("404 retired model: next model immediately, long rest", async () => {
 });
 
 // --- everything fails ------------------------------------------------------
-test("all models fail: one clear busy error, every model named, no secrets in the message or logs", async () => {
+test("all models fail: generic busy error contains no internal model IDs, no secrets in the message or logs", async () => {
   install({
     "model-a": httpError(503, `overloaded (https://x.test/v1?key=${FAKE_KEY})`),
     "model-b": httpError(429, "quota"),
@@ -264,7 +264,7 @@ test("all models fail: one clear busy error, every model named, no secrets in th
   const r = await run();
   assert.ok(r.error);
   assert.equal(r.error.status, 503);
-  for (const m of chain) assert.match(r.error.message, new RegExp(m));
+  for (const m of chain) assert.doesNotMatch(r.error.message, new RegExp(m));
   assert.ok(!r.error.message.includes(FAKE_KEY));
   assert.ok(!logs.join("\n").includes(FAKE_KEY));
   assert.ok(r.error.retryAfter);
@@ -513,8 +513,10 @@ test("e2e: Gemini 503 everywhere -> handler streams the Groq backup, not Gemini'
   const res = await t.post(t.env({ GROQ_API_KEY: "gsk-test", DEFAULT_MODEL: "model-a", FALLBACK_MODELS: "model-b" }));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("X-ULTRON-Fallback"), "provider");
-  assert.match(res.headers.get("X-ULTRON-Model"), /^groq\//);
-  assert.match(await res.text(), /from groq/);
+  assert.equal(res.headers.get("X-ULTRON-Model"), "ultron");
+  const streamText = await res.text();
+  assert.match(streamText, /from groq/);
+  assert.doesNotMatch(streamText, /gpt-oss-120b/);
   assert.ok(t.seen.gemini > 0, "Gemini was tried first");
   assert.equal(t.seen.groq, 1);
   assert.equal(t.seen.groqAuth, "Bearer gsk-test");
@@ -547,6 +549,26 @@ test("e2e: Gemini 503 and an image attachment -> Groq is skipped, reason reporte
 });
 
 
+test("public model list exposes only ULTRON tier aliases", async () => {
+  const response = await W.default.fetch(new Request("https://worker.test/models"), {}, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.data.map(item => item.id), ["ultron-auto", "ultron-fast", "ultron-reasoning"]);
+  assert.doesNotMatch(JSON.stringify(body), /gemini|groq|gpt-oss|@cf\//i);
+});
+
+test("public stream replaces provider model metadata", async () => {
+  const payload = `data: {"model":"openai/gpt-oss-120b","choices":[{"delta":{"content":"ok"}}]}
+
+`;
+  const input = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(payload)); controller.close(); } });
+  const reader = W.toPublicOpenAIStream(input).getReader();
+  let text = "";
+  for (;;) { const { value, done } = await reader.read(); if (done) break; text += new TextDecoder().decode(value); }
+  assert.match(text, /"model":"ultron"/);
+  assert.doesNotMatch(text, /gpt-oss-120b/);
+});
+
 // --- FLUX image generation --------------------------------------------------
 test("image edit intent: attached images plus edit instructions route to Klein", () => {
   const image = { type: "image_url", image_url: { url: "data:image/jpeg;base64,AQID" } };
@@ -562,7 +584,7 @@ test("e2e: image edit uses FLUX.2 Klein multipart and returns an edited image", 
   const messages = [{ role: "user", content: [{ type: "text", text: "Make this photo cinematic" }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,AQID" } }] }];
   const res = await t.post(t.env({ AI: ai }), messages);
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get("X-ULTRON-Image-Model"), "flux-2-klein-4b");
+  assert.equal(res.headers.get("X-ULTRON-Image-Model"), "ultron-image");
   assert.equal(res.headers.get("X-ULTRON-Image-Action"), "edit");
   assert.equal(called.model, "@cf/black-forest-labs/flux-2-klein-4b");
   assert.ok(called.options.multipart.body);
@@ -592,7 +614,7 @@ test("e2e: explicit image request returns binary JPEG from the Workers AI bindin
   const res = await t.post(t.env({ AI: ai }), [{ role: "user", content: "Create an image of a horse in a misty forest" }]);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("Content-Type"), "image/jpeg");
-  assert.equal(res.headers.get("X-ULTRON-Image-Model"), "flux-1-schnell");
+  assert.equal(res.headers.get("X-ULTRON-Image-Model"), "ultron-image");
   assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [1, 2, 3, 4]);
   assert.equal(called.model, "@cf/black-forest-labs/flux-1-schnell");
   assert.equal(called.options.steps, 4);
@@ -624,6 +646,15 @@ test("memory validator accepts bounded facts and rejects malformed or excessive 
   assert.equal(good.value.facts.length, 1);
   assert.equal(W.validateUserMemory({ facts: Array.from({ length: 101 }, () => ({ text: "fact" })) }).ok, false);
   assert.equal(W.validateUserMemory({ facts: [{ text: "x".repeat(501) }] }).ok, false);
+  const duplicates = W.validateUserMemory({ facts: [
+    { id: "old", text: "I prefer warm colors.", updatedAt: 10 },
+    { id: "new", text: "i prefer warm colors", updatedAt: 20 },
+    { id: "opposite", text: "I dislike warm colors", updatedAt: 25 },
+    { id: "different", text: "I prefer cool colors.", updatedAt: 30 },
+  ] });
+  assert.equal(duplicates.value.facts.length, 2, "normalized duplicate facts collapse");
+  assert.equal(duplicates.value.facts.find(fact => fact.text.toLowerCase().includes("warm")).id, "opposite", "newest opposite preference replaces the older conflicting fact");
+  assert.equal(W.validateUserMemory({ facts: [{ text: "I prefer to save my health diagnosis" }] }).ok, false, "sensitive details are rejected server-side");
 });
 test("conversation archive validator strips non-text attachment payloads and enforces limits", () => {
   const good = W.validateConversationArchive({ threads: [{ id: "t1", title: "Chat", messages: [{ role: "user", content: [{ text: "hello" }, { image_url: { url: "data:image/png;base64,SECRET" } }] }] }] });

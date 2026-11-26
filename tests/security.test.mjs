@@ -31,7 +31,9 @@ assert.match(frontend, /accept="\.md,\.txt,text\/markdown,text\/plain"/, "file p
 assert.doesNotMatch(frontend, /localStorage\.setItem\(STORAGE_KEY,\s*JSON\.stringify\(state\)\)/, "raw state must never be persisted");
 assert.doesNotMatch(frontend, /gemini-[a-z0-9.-]+/i, "provider model IDs must remain server-side");
 assert.match(frontend, /model: \'auto\'/, "browser defaults to an abstract model tier");
-assert.match(worker, /requestedModel === "reasoning"[\s\S]*requestedModel === "fast"/, "Worker resolves abstract tiers using server configuration");
+assert.match(frontend, /<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc=/, 'artifact exports execute in an opaque sandbox');
+assert.doesNotMatch(frontend, /new Blob\(\[code\]/, 'raw artifact HTML must not be opened directly as a blob');
+assert.match(worker, /requestedTier === "reasoning"[\s\S]*requestedTier === "fast"/, "Worker resolves abstract tiers using server configuration");
 
 // Worker secrets remain environment bindings; privileged routes use verified Google identity.
 assert.match(worker, /env\.GEMINI_API_KEY/);

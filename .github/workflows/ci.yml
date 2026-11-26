@@ -36,3 +36,5 @@ jobs:
         run: node --test identity.test.mjs
       - name: Run device registry tests
         run: node --test tests/device-registry.test.mjs
+      - name: Run memory relevance tests
+        run: node --test memory.test.mjs
