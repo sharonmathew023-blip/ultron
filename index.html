@@ -1175,6 +1175,33 @@ function showGoogleLogin(message='') {
   document.getElementById('authGate').style.display='flex';
   document.getElementById('googleSignInError').textContent=message;
 }
+const ULTRON_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+let ultronIdleTimer = null;
+function expireInactiveGoogleSession() {
+  if (ultronIdleTimer) clearTimeout(ultronIdleTimer);
+  ultronIdleTimer = null;
+  googleCredential = null;
+  googleAccountEmail = '';
+  googleAccountName = '';
+  try { sessionStorage.removeItem(GOOGLE_SESSION_KEY); } catch (_) {}
+  try { window.google?.accounts?.id?.disableAutoSelect?.(); } catch (_) {}
+  const accountLabel = document.getElementById('googleAccountLabel');
+  if (accountLabel) accountLabel.textContent = 'Not signed in';
+  showGoogleLogin('Your session expired after 15 minutes of inactivity. Sign in again to continue.');
+}
+function resetUltronIdleTimer() {
+  if (!getGoogleCredential()) return;
+  if (ultronIdleTimer) clearTimeout(ultronIdleTimer);
+  ultronIdleTimer = setTimeout(expireInactiveGoogleSession, ULTRON_IDLE_TIMEOUT_MS);
+}
+function startUltronIdleTimer() { resetUltronIdleTimer(); }
+['pointerdown', 'keydown', 'touchstart', 'mousemove', 'wheel'].forEach(eventName => {
+  document.addEventListener(eventName, resetUltronIdleTimer, { passive: true });
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') resetUltronIdleTimer();
+});
+
 function onGoogleCredential(response) {
   const payload = decodeGooglePayload(response.credential);
   if (!payload || payload.aud !== GOOGLE_CLIENT_ID || !payload.exp || payload.exp <= Math.floor(Date.now()/1000)) {
@@ -1182,6 +1209,7 @@ function onGoogleCredential(response) {
     return;
   }
   googleCredential = response.credential;
+  startUltronIdleTimer();
   try { sessionStorage.setItem(GOOGLE_SESSION_KEY, googleCredential); } catch (_) {}
   googleAccountEmail = payload.email || 'Google account';
   googleAccountName = payload.given_name || (payload.name ? payload.name.split(' ')[0] : '') || '';
@@ -1210,6 +1238,7 @@ async function refreshConnectedAppAccess() {
 }
 function restoreGoogleSessionUI() {
   if (!getGoogleCredential()) return false;
+  startUltronIdleTimer();
   void activateAccountWorkspace().then(refreshConnectedAppAccess);
   document.getElementById('googleAccountLabel').textContent = googleAccountEmail;
   const avatar=document.getElementById('topProfileBtn');if(avatar)avatar.textContent=(googleAccountName||'S').slice(0,1).toUpperCase();
