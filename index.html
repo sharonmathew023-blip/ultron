@@ -2664,7 +2664,7 @@ isError = true;
 const failureText = String(error && error.message || '');
 const accountOrLimitFailure = /\b401\b|\b403\b|\b429\b|sign.?in|rate.?limit|message limit|unauthorized|forbidden/i.test(failureText);
 replyText = accountOrLimitFailure
-? \`**Couldn't complete the request**\n\n\${failureText || 'Please check your sign-in or usage limit and try again.'}\`
+? "**Couldn't complete the request**\n\n" + (failureText || 'Please check your sign-in or usage limit and try again.')
 : 'Ith ennekond koottiyal koodilla mone, nee ChatGPT aduth choyich nokk 😭';
 statusEl.textContent = 'Engine: Connection failed';
 }
