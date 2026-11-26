@@ -44,6 +44,8 @@ node --test tests/composer-regression.test.mjs
 node --test modes.test.mjs
 node --test tests/client-timeout.test.mjs
 node --test identity.test.mjs
+node --test tests/device-registry.test.mjs
+node --test memory.test.mjs
 ```
 
 ## Deploy the Worker
@@ -76,7 +78,9 @@ For GitHub Pages, configure the repository's Pages source to deploy from `main` 
 ## Memory and privacy
 
 - Signed-in conversation archives and explicit preference facts are scoped to the verified Google subject ID.
-- Use `/memory` to inspect saved preference facts.
+- Use `/memory` to inspect saved preference facts and `/memory search <phrase>` to find relevant notes.
+- Explicit new preferences replace simple contradictory preferences; exact duplicates are collapsed server-side.
+- Relevant notes are ranked and passed as untrusted user context, never injected as system instructions.
 - Use `/forget-memory [phrase]` to remove matching facts. Use `/forget-memory` alone to clear all saved facts.
 - Cloud archives are text-only; binary attachments remain local.
 - Memory v1 stores explicit low-risk preferences only. It does not infer sensitive traits.

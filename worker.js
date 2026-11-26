@@ -1401,18 +1401,31 @@ function validateUserMemory(input) {
   if (!input || typeof input !== "object" || !Array.isArray(input.facts) || input.facts.length > 100) {
     return { ok: false, message: "Memory must contain a facts array with no more than 100 items." };
   }
-  const facts = [];
+  const factsByText = new Map();
   for (const item of input.facts) {
     if (!item || typeof item.text !== "string") return { ok: false, message: "Each memory fact must contain text." };
     const text = item.text.trim();
     if (!text || text.length > 500) return { ok: false, message: "Memory facts must contain 1 to 500 characters." };
-    facts.push({
-      id: String(item.id || crypto.randomUUID()).slice(0, 80),
-      text,
-      category: String(item.category || "preference").slice(0, 32),
-      updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now(),
-    });
+    if (/\b(health|medical|diagnos|medication|password|passcode|api key|bank account|credit card|politic|religion|sexual|orientation|ethnic|race)\b/i.test(text)) {
+      return { ok: false, message: "Saved memory supports low-risk preferences only. Remove sensitive details and try again." };
+    }
+    const updatedAt = Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now();
+    const normalized = text.toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "").trim();
+    const preference = /^(?:please\s+)?(?:i\s+)?(prefer|like|love|dislike|hate|avoid|do not like|don't like)\s+(.+)$/i.exec(normalized);
+    const polarity = preference && /^(dislike|hate|avoid|do not like|don't like)$/i.test(preference[1]) ? "negative" : "positive";
+    const key = preference ? "preference:" + preference[2].replace(/[.!?]+$/, "").trim() : "fact:" + normalized;
+    const existing = factsByText.get(key);
+    if (!existing || updatedAt >= existing.updatedAt) {
+      factsByText.set(key, {
+        id: String(item.id || crypto.randomUUID()).slice(0, 80),
+        text,
+        category: String(item.category || "preference").slice(0, 32),
+        updatedAt,
+        _polarity: preference ? polarity : "neutral",
+      });
+    }
   }
+  const facts = [...factsByText.values()].map(({ _polarity, ...fact }) => fact);
   return { ok: true, value: { facts, updatedAt: Date.now() } };
 }
 

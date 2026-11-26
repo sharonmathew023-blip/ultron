@@ -646,6 +646,15 @@ test("memory validator accepts bounded facts and rejects malformed or excessive 
   assert.equal(good.value.facts.length, 1);
   assert.equal(W.validateUserMemory({ facts: Array.from({ length: 101 }, () => ({ text: "fact" })) }).ok, false);
   assert.equal(W.validateUserMemory({ facts: [{ text: "x".repeat(501) }] }).ok, false);
+  const duplicates = W.validateUserMemory({ facts: [
+    { id: "old", text: "I prefer warm colors.", updatedAt: 10 },
+    { id: "new", text: "i prefer warm colors", updatedAt: 20 },
+    { id: "opposite", text: "I dislike warm colors", updatedAt: 25 },
+    { id: "different", text: "I prefer cool colors.", updatedAt: 30 },
+  ] });
+  assert.equal(duplicates.value.facts.length, 2, "normalized duplicate facts collapse");
+  assert.equal(duplicates.value.facts.find(fact => fact.text.toLowerCase().includes("warm")).id, "opposite", "newest opposite preference replaces the older conflicting fact");
+  assert.equal(W.validateUserMemory({ facts: [{ text: "I prefer to save my health diagnosis" }] }).ok, false, "sensitive details are rejected server-side");
 });
 test("conversation archive validator strips non-text attachment payloads and enforces limits", () => {
   const good = W.validateConversationArchive({ threads: [{ id: "t1", title: "Chat", messages: [{ role: "user", content: [{ text: "hello" }, { image_url: { url: "data:image/png;base64,SECRET" } }] }] }] });
