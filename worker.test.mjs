@@ -22,7 +22,7 @@ shrink("BACKOFF_MAX_MS", 100);
 shrink("MIN_ATTEMPT_MS", 50);
 shrink("TOTAL_BUDGET_MS", 5000);
 source += `
-export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, toPublicOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest, userStoreKey, validateUserMemory, validateConversationArchive };
+export { callGemini, callGeminiJson, callGroqFallback, makeHealth, memCooldowns, redact, errorBody, toOpenAIStream, toPublicOpenAIStream, buildModelChain, readStreamTextLimited, verifyGoogleIdToken, detectImageGenerationRequest, detectImageEditRequest, userStoreKey, validateUserMemory, validateConversationArchive, isAllowedBrowseUrl, readPublicPageForAgent };
 export function __reset() { memCooldowns.clear(); kvCooldownCache = { at: 0, map: {} }; }
 export function __resetJwks() { googleJwksCache = null; googleJwksExpiresAt = 0; googleJwksFetchedAt = 0; googleJwksInflight = null; }
 `;
@@ -548,6 +548,42 @@ test("e2e: Gemini 503 and an image attachment -> Groq is skipped, reason reporte
   assert.equal(t.seen.groq, 0);
 });
 
+
+test("browse reader requires exact trusted HTTPS hostnames and blocks unsafe URL forms", () => {
+  const env = { BROWSE_ALLOWED_HOSTS: "docs.example.com, developer.mozilla.org" };
+  const allowed = url => W.isAllowedBrowseUrl(new URL(url), env);
+  assert.equal(allowed("https://docs.example.com/guide"), true);
+  assert.equal(allowed("https://developer.mozilla.org/en-US/"), true);
+  assert.equal(allowed("http://docs.example.com/"), false);
+  assert.equal(allowed("https://unlisted.example.com/"), false);
+  assert.equal(allowed("https://evil-docs.example.com/"), false);
+  assert.equal(allowed("https://docs.example.com:8443/"), false);
+  assert.equal(allowed("https://user:pass@docs.example.com/"), false);
+  assert.equal(allowed("https://127.0.0.1/"), false);
+  assert.equal(allowed("https://2130706433/"), false);
+  assert.equal(allowed("https://[::1]/"), false);
+  assert.equal(allowed("https://metadata.google.internal/"), false);
+  assert.equal(W.isAllowedBrowseUrl(new URL("https://docs.example.com/"), {}), false);
+  assert.equal(W.isAllowedBrowseUrl(new URL("https://docs.example.com/"), { BROWSE_ALLOWED_HOSTS: "*.example.com" }), false);
+});
+
+test("browse reader rejects redirects outside the exact host allowlist before fetching them", async () => {
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response("", { status: 302, headers: { Location: "https://unlisted.example.com/private" } });
+  };
+  try {
+    await assert.rejects(
+      W.readPublicPageForAgent("https://docs.example.com/start", { BROWSE_ALLOWED_HOSTS: "docs.example.com" }),
+      /redirected to a blocked or unapproved address/
+    );
+    assert.equal(calls, 1, "the redirect target must be rejected before a second request");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
 
 test("public model list exposes only ULTRON tier aliases", async () => {
   const response = await W.default.fetch(new Request("https://worker.test/models"), {}, { waitUntil() {} });

@@ -65,6 +65,8 @@ wrangler secret put ULTRON_OWNER_EMAIL
 wrangler secret put COMPOSIO_API_KEY
 ```
 
+Owner-only website reading is disabled until `BROWSE_ALLOWED_HOSTS` is configured in Cloudflare Worker Variables. Set it to a comma-separated list of exact hostnames, for example `docs.example.com,developer.mozilla.org`. The reader permits HTTPS on the standard port only, and every redirect must stay on a listed hostname. Wildcards are not supported.
+
 The `ULTRON_STATE` KV namespace, Workers AI binding, rate-limit bindings, Google OAuth client ID, and default model settings are declared in `wrangler.toml`. Confirm the namespace and rate-limit IDs belong to the target Cloudflare account before deploying.
 
 Deploy from the repository root:
@@ -94,6 +96,7 @@ For GitHub Pages, configure the repository's Pages source to deploy from `main` 
 - Retry attempts are bounded across the provider chain.
 - Imported skills are untrusted and must pass validation.
 - Generated HTML runs in a sandboxed preview.
+- Owner-only page reading is restricted to exact `BROWSE_ALLOWED_HOSTS` entries; redirects must remain on listed hosts.
 - Worker logs contain operational metadata, not prompts, tokens, or account emails.
 
 ## Known limitations
