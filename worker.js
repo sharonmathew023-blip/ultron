@@ -837,13 +837,13 @@ async function readStreamTextLimited(stream, maxBytes) {
 }
 
 function normalizeBrowseHostname(hostname) {
-  return String(hostname || "").toLowerCase().replace(/^\\[|\\]$/g, "").replace(/\\.$/, "");
+  return String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
 }
 
 function isPublicWebHost(hostname) {
   const host = normalizeBrowseHostname(hostname);
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".test") || host.endsWith(".example") || host.endsWith(".invalid")) return false;
-  if (/^(\\d{1,3}\\.){3}\\d{1,3}$/.test(host) || host.includes(":")) return false;
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(":")) return false;
   const labels = host.split(".");
   if (labels.length < 2 || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return false;
   return true;
