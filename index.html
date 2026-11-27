@@ -1163,13 +1163,29 @@ let googleAccountName = '';
 let connectedAppsAvailable = false;
 let currentComposerMode = 'chat';
 let webSearchEnabled = false;
+function setComposerMode(mode) {
+  if (!['chat', 'research', 'create'].includes(mode)) mode = 'chat';
+  currentComposerMode = mode;
+  webSearchEnabled = mode === 'research';
+  document.querySelectorAll('#composerModeToggle [data-mode]').forEach(button => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const searchButton = document.getElementById('webSearchToggle');
+  if (searchButton) {
+    searchButton.classList.toggle('active', webSearchEnabled);
+    searchButton.setAttribute('aria-pressed', String(webSearchEnabled));
+    searchButton.title = webSearchEnabled ? 'Research is enabled: web search with sources' : 'Research: web search with sources';
+  }
+  const prompt = document.getElementById('promptInput');
+  if (prompt) prompt.placeholder = mode === 'research' ? 'What should ULTRON research?' : mode === 'create' ? 'Describe what you want ULTRON to create…' : 'Ask ULTRON anything…';
+}
+document.querySelectorAll('#composerModeToggle [data-mode]').forEach(button => {
+  button.addEventListener('click', () => setComposerMode(button.dataset.mode));
+});
 function toggleWebSearch() {
-  webSearchEnabled = !webSearchEnabled;
-  const button = document.getElementById('webSearchToggle');
-  if (!button) return;
-  button.classList.toggle('active', webSearchEnabled);
-  button.setAttribute('aria-pressed', String(webSearchEnabled));
-  button.title = webSearchEnabled ? 'Research is enabled: web search with sources' : 'Research: web search with sources';
+  setComposerMode(webSearchEnabled ? 'chat' : 'research');
 }
 document.getElementById('webSearchToggle').addEventListener('click', toggleWebSearch);
 function decodeGooglePayload(token) {
@@ -2088,32 +2104,7 @@ function extractArtifactFromReply(markdown) {
   const css = blocks.filter(block => block.language === 'css').map(block => block.code).join('\n\n');
   const js = blocks.filter(block => ['js', 'javascript'].includes(block.language)).map(block => block.code).join('\n\n');
   if (!new RegExp('<html[\\s>]', 'i').test(code)) {
-    code = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>' + code + '\n<script id="ultron-phase1-mode-behaviour">
-(() => {
-  const modeButtons = [...document.querySelectorAll("#composerModeToggle [data-mode]")];
-  const prompt = document.getElementById("promptInput");
-  const searchButton = document.getElementById("webSearchToggle");
-  const setMode = (mode) => {
-    if (!["chat","research","create"].includes(mode)) mode = "chat";
-    currentComposerMode = mode;
-    webSearchEnabled = mode === "research";
-    modeButtons.forEach(button => {
-      const active = button.dataset.mode === mode;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    });
-    if (searchButton) {
-      searchButton.classList.toggle("active", webSearchEnabled);
-      searchButton.setAttribute("aria-pressed", String(webSearchEnabled));
-      searchButton.title = webSearchEnabled ? "Research is enabled: web search with sources" : "Research: web search with sources";
-    }
-    if (prompt) prompt.placeholder = mode === "research" ? "What should ULTRON research?" : mode === "create" ? "Describe what you want ULTRON to create…" : "Ask ULTRON anything…";
-  };
-  modeButtons.forEach(button => button.addEventListener("click", () => setMode(button.dataset.mode)));
-  if (searchButton) searchButton.addEventListener("click", () => setMode(webSearchEnabled ? "chat" : "research"));
-  setMode("chat");
-})();
-</script>
+    code = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>' + code + '\n</body></html>'
 </body></html>';
   }
   if (css && !new RegExp('<style[\\s>]', 'i').test(code)) {
