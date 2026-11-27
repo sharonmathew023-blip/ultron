@@ -497,7 +497,7 @@ async function e2eSetup({ gemini, groq }) {
   };
   const limiter = { limit: async () => ({ success: true }) };
   const env = (extra = {}) => ({ GOOGLE_CLIENT_ID: CLIENT_ID, GEMINI_API_KEY: FAKE_KEY, ULTRON_USER_LIMITER: limiter, ULTRON_IP_LIMITER: limiter, ...extra });
-  const post = (envVars, messages = [{ role: "user", content: "Hi" }], model = "model-a") => W.default.fetch(
+  const post = (envVars, messages = [{ role: "user", content: "Hi" }], model = "auto") => W.default.fetch(
     new Request("https://worker.test/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + head + "." + body + "." + sig },
