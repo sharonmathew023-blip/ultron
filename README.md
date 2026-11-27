@@ -19,8 +19,10 @@ The browser sends abstract intelligence tiers. Provider model IDs, API keys, rou
 | `modes.js` | Server-owned Chat and Research prompts |
 | `skill-rules.js`, `skill-engine.js`, `builtin-skills.js` | Skill parsing, validation, activation, and UI |
 | `worker.js` | Authentication, rate limits, AI routing, streaming, citations, fallback, memory/archive APIs, telemetry, owner-only integrations |
+| `agent/`, `authorization/`, `protocol/`, `runtime/` | Secure coding-agent runtime (see below) |
+| `.ultron/` | Project instructions, permission settings, and coding skills |
 | `wrangler.toml` | Cloudflare Worker bindings and public configuration |
-| `worker.test.mjs`, `tests/` | Worker, security, UI, retry, and mode regression tests |
+| `worker.test.mjs`, `tests/` | Worker, security, UI, retry, mode, and coding-runtime tests |
 
 ## Run locally
 
@@ -47,6 +49,56 @@ node --test identity.test.mjs
 node --test tests/device-registry.test.mjs
 node --test memory.test.mjs
 ```
+
+## Coding runtime
+
+The browser app answers questions. The coding runtime is what can inspect a repository, edit
+files, run checks and show diffs. It is a separate Node.js process, so the Worker never gets
+shell access and the browser is never trusted with it.
+
+```bash
+node runtime/local-daemon.js --root . --owner you@example.com
+```
+
+The daemon prints a one-time pairing code, listens on `127.0.0.1:4319`, and rejects every
+request without a paired token. Its task API is small and explicit:
+
+| Route | Purpose |
+| --- | --- |
+| `POST /pair` | Exchange the one-time code for a short-lived token |
+| `GET /workspace` | Workspace identity and the enabled tool list |
+| `POST /tasks` | Create a task bound to the paired owner |
+| `POST /tasks/:id/tools/:tool` | Run one validated tool call |
+| `GET /tasks/:id/events` | Server-Sent Events, replayable with `?after=` or `Last-Event-ID` |
+| `POST /tasks/:id/approvals/:id` | `once`, `task`, or `deny` |
+| `POST /tasks/:id/cancel` | Cancel a task; later tool calls are refused |
+| `POST /tasks/:id/undo` | Restore every path the task changed |
+
+Tools are a fixed registry, never arbitrary shell. Read-only: `workspace.list`, `file.read`,
+`file.glob`, `file.search`, `git.status`, `git.diff`, `test.detect`. Approved edits:
+`file.write`, `file.edit`, `file.delete`, `patch.apply`. Policy-checked commands:
+`shell.run`, `test.run`, `lint.run`, `build.run`.
+
+How a call is decided, in order:
+
+1. The tool name must exist in `protocol/schemas.js`, and input is rebuilt from declared fields only.
+2. The path must resolve inside the workspace, and protected files (`.env`, `.ssh`, keys, credentials) are refused.
+3. Command policy denies beat everything; then `deny` rules, then `ask`, then `allow`, then the mode baseline.
+4. An `ask` result becomes an approval bound to that user and task, with an expiry.
+5. Every edit returns a diff, keeps a checkpoint, and can be undone.
+
+Nothing is committed, pushed, deployed or installed without an explicit approval, and the runtime
+holds no provider key: planning stays in the Worker, execution stays in the runtime.
+
+The runtime is covered by dependency-free tests:
+
+```bash
+node --test tests/agent-loop.test.mjs
+node --test tests/runtime-daemon.test.mjs
+```
+
+`.ultron/instructions.md` documents the layout, the enforced rules, and what is still planned
+(Worker task routes, git write workflow, subagents, hooks, MCP, cloud workspaces).
 
 ## Deploy the Worker
 
@@ -98,6 +150,9 @@ For GitHub Pages, configure the repository's Pages source to deploy from `main` 
 - Generated HTML runs in a sandboxed preview.
 - Owner-only page reading is restricted to exact `BROWSE_ALLOWED_HOSTS` entries; redirects must remain on listed hosts.
 - Worker logs contain operational metadata, not prompts, tokens, or account emails.
+- The coding runtime is workspace-bound: traversal, absolute paths, escaping symlinks and protected files are refused.
+- Runtime commands never use a shell, are policy-checked, time out, cap output, and kill their process group.
+- Runtime tokens are stored hashed; approvals are bound to one user, one task, and expire.
 
 ## Known limitations
 
