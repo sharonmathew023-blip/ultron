@@ -486,22 +486,22 @@ async function e2eSetup({ gemini, groq }) {
   const head = b64({ alg: "RS256", kid: "k1" });
   const body = b64({ iss: "https://accounts.google.com", aud: CLIENT_ID, sub: "user-1", email: "user@example.com", email_verified: true, iat: now, exp: now + 600 });
   const sig = Buffer.from(await crypto.subtle.sign({ name: "RSASSA-PKCS1-v1_5" }, pair.privateKey, new TextEncoder().encode(head + "." + body))).toString("base64url");
-  const seen = { gemini: 0, groq: 0, groqAuth: null };
+  const seen = { gemini: 0, groq: 0, groqAuth: null, models: [] };
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     if (u.includes("openid-configuration")) return new Response(JSON.stringify({ jwks_uri: "https://www.googleapis.com/oauth2/v3/certs" }), { status: 200 });
     if (u.includes("googleapis.com/oauth2")) return new Response(JSON.stringify({ keys: [jwk] }), { status: 200, headers: { "Cache-Control": "public, max-age=3600" } });
-    if (u.includes("generativelanguage.googleapis.com")) { seen.gemini++; return gemini(init); }
+    if (u.includes("generativelanguage.googleapis.com")) { seen.gemini++; const match = /models\/([^:]+):/.exec(u); if (match) seen.models.push(match[1]); return gemini(init); }
     if (u.includes("api.groq.com")) { seen.groq++; seen.groqAuth = init.headers && init.headers.Authorization; return groq(init); }
     throw new Error("unexpected fetch: " + u);
   };
   const limiter = { limit: async () => ({ success: true }) };
   const env = (extra = {}) => ({ GOOGLE_CLIENT_ID: CLIENT_ID, GEMINI_API_KEY: FAKE_KEY, ULTRON_USER_LIMITER: limiter, ULTRON_IP_LIMITER: limiter, ...extra });
-  const post = (envVars, messages = [{ role: "user", content: "Hi" }]) => W.default.fetch(
+  const post = (envVars, messages = [{ role: "user", content: "Hi" }], model = "auto") => W.default.fetch(
     new Request("https://worker.test/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + head + "." + body + "." + sig },
-      body: JSON.stringify({ model: "model-a", messages }),
+      body: JSON.stringify({ model, messages }),
     }), envVars, { waitUntil() {} });
   return { env, post, seen };
 }
@@ -555,6 +555,20 @@ test("public model list exposes only ULTRON tier aliases", async () => {
   const body = await response.json();
   assert.deepEqual(body.data.map(item => item.id), ["ultron-auto", "ultron-fast", "ultron-reasoning"]);
   assert.doesNotMatch(JSON.stringify(body), /gemini|groq|gpt-oss|@cf\//i);
+});
+
+test("chat endpoint rejects arbitrary provider model IDs and accepts configured public tiers", async () => {
+  const t = await e2eSetup({ gemini: () => okStream([sse("tier routed", { finishReason: "STOP" })]), groq: () => { throw new Error("Groq must not run"); } });
+  for (const model of ["model-a", "gemini-3.5-flash", "some-valid-provider-id", "", "__proto__"]) {
+    const response = await t.post(t.env({ DEFAULT_MODEL: "model-a" }), undefined, model);
+    assert.equal(response.status, 400, "model should be rejected: " + JSON.stringify(model));
+    assert.match(await response.text(), /Invalid model tier/);
+  }
+  assert.equal(t.seen.gemini, 0, "invalid model requests must not reach a provider");
+
+  const response = await t.post(t.env({ DEFAULT_MODEL: "model-a", FAST_MODEL: "model-b" }), undefined, "ultron-fast");
+  assert.equal(response.status, 200);
+  assert.deepEqual(t.seen.models, ["model-b"], "ULTRON fast alias maps to server-side configuration");
 });
 
 test("public stream replaces provider model metadata", async () => {

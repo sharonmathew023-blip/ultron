@@ -32,6 +32,7 @@ const DEFAULT_MODEL = "gemini-3.5-flash"; // 3.8-flash answers 503 for days at a
 const DEFAULT_FALLBACKS = "gemini-3.6-flash,gemini-flash-lite-latest";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const PUBLIC_MODEL_TIERS = new Set(["auto", "fast", "reasoning", "ultron-auto", "ultron-fast", "ultron-reasoning"]);
 const PUBLIC_MODEL_ID = "ultron";
 const PUBLIC_IMAGE_MODEL_ID = "ultron-image";
 const GROQ_MODEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
@@ -283,7 +284,8 @@ export default {
     const activeMode = applyMode(input);
     applyUltronIdentity(input); // append last so the core identity has final system-prompt priority
 
-    const requestedModel = String(input.model || "auto").trim();
+    const requestedModel = input.model === undefined ? "auto" : String(input.model).trim();
+    if (!PUBLIC_MODEL_TIERS.has(requestedModel)) return fail(400, "Invalid model tier. Use auto, fast, reasoning, or a ULTRON model alias.");
     const requestedTier = ({ "ultron-auto": "auto", "ultron-fast": "fast", "ultron-reasoning": "reasoning" })[requestedModel] || requestedModel;
     const route = classifyRequest(input.messages);
     const automaticModel = route === "fast"
