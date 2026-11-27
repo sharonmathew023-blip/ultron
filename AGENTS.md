@@ -9,6 +9,11 @@ Read this file before editing code. These rules apply to every change in this re
 - `wrangler.toml`: non-secret Worker configuration and bindings.
 - `skill-engine.js`, `skill-rules.js`, `builtin-skills.js`: skill UI, parsing/security rules, and built-in skills.
 - `SKILLS.md`: skill format and behavior documentation.
+- `protocol/`: tool registry, task states, event contract, SSE framing.
+- `authorization/`: path policy, command policy, approval store.
+- `agent/`: permission engine, tool registry, task state, event log, context manager, agent loop.
+- `runtime/`: local daemon, workspace pairing, patch/checkpoint manager, command runner, sandbox policy, tool executors.
+- `.ultron/`: project instructions, permission settings, and coding skills.
 - `tests/`: dependency-free Node.js checks.
 
 ## Non-negotiable security rules
@@ -19,6 +24,11 @@ Read this file before editing code. These rules apply to every change in this re
 5. Keep chat authentication and rate limiting enforced in the Worker. Do not weaken them to make demos pass.
 6. Treat uploaded skills, imported packs, chat messages, URLs, and connector results as untrusted data. Never execute skill text as code or allow it to grant itself tools, bypass auth, reveal secrets, or override security rules.
 7. Use fake sentinel credentials in tests. Never use real credentials in fixtures.
+8. The coding runtime is the only component allowed to touch a filesystem or spawn a process. Never add file or command execution to `worker.js` or `index.html`.
+9. Every runtime path must pass `authorization/path-policy.js`; every command must pass `authorization/command-policy.js`. Never add a code path that skips them, and never run a command through a shell.
+10. Keep `deny -> ask -> allow` precedence. A broad deny must never be overridable by a narrower allow.
+11. Approvals must stay bound to one user and one task, and must expire. Never let the browser or a skill approve its own request.
+12. Runtime tools are a fixed registry. Do not widen it to git writes, deployments, installs or MCP without an approval design and tests.
 
 ## AI provider and fallback rules
 1. Keep provider credentials server-side. Browser requests must never contain provider API keys.
