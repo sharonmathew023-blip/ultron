@@ -970,6 +970,29 @@ html[data-personality="unhinged"] body:before{content:"";position:fixed;inset:0;
 .personality-mode-copy{display:flex;flex-direction:column;gap:6px;min-width:0}.personality-mode-copy>label{font-weight:650;color:var(--text-primary);cursor:pointer}.personality-mode-copy p{font-size:.78rem;line-height:1.5;color:var(--text-secondary);max-width:360px}.personality-mode-status{font:700 .65rem var(--font-mono);letter-spacing:.12em;color:var(--accent-terracotta)}
 .personality-switch{position:relative;display:inline-flex;flex:0 0 50px;width:50px;height:29px;cursor:pointer}.personality-switch input{position:absolute;width:1px;height:1px;opacity:0}.personality-switch-track{position:absolute;inset:0;border-radius:999px;background:var(--bg-elevated);border:1px solid var(--border-hairline);transition:background .2s,border-color .2s}.personality-switch-track:before{content:"";position:absolute;width:21px;height:21px;left:3px;top:3px;border-radius:50%;background:var(--text-muted);transition:transform .2s,background .2s}.personality-switch input:checked+.personality-switch-track{background:rgba(255,49,88,.18);border-color:#ff3158}.personality-switch input:checked+.personality-switch-track:before{transform:translateX(21px);background:#ff3158}.personality-switch input:focus-visible+.personality-switch-track{outline:3px solid color-mix(in srgb,#ff3158 45%,transparent);outline-offset:3px}
 </style>
+<style id="ultron-phase1-ux">
+/* Phase 1: clearer onboarding and a mode-first composer */
+.ultron-intro-card{max-width:420px;margin:0 auto 20px;padding:22px 20px;border:1px solid var(--border-hairline);border-radius:18px;background:var(--bg-surface);text-align:left}
+.ultron-intro-card .ultron-intro-kicker{display:block;margin-bottom:10px;color:var(--text-muted);font:600 10px/1.4 var(--font-mono);letter-spacing:.12em}
+.ultron-intro-card h2{margin:0 0 10px;color:var(--text-primary);font:700 clamp(1.35rem,5vw,1.8rem)/1.15 var(--font-sans);letter-spacing:-.04em}
+.ultron-intro-card p{margin:7px 0;color:var(--text-secondary);font:400 13px/1.6 var(--font-sans)}
+.ultron-intro-actions{display:flex;align-items:center;gap:12px;margin-top:17px}
+.ultron-intro-enter{min-height:42px;padding:0 16px;border:1px solid var(--accent-terracotta);border-radius:10px;background:var(--accent-terracotta);color:#fff;font:600 12px var(--font-sans);cursor:pointer}
+[data-theme="dark"] .ultron-intro-enter{color:#171a24}
+.ultron-intro-skip{min-height:42px;padding:0 10px;border:0;background:transparent;color:var(--text-secondary);font:500 12px var(--font-sans);cursor:pointer}
+#composerModeToggle{width:min(100%,760px);justify-content:flex-start;margin:0 auto 10px;padding:3px;border:1px solid var(--border-hairline);border-radius:12px;background:var(--bg-surface);gap:3px}
+#composerModeToggle .mode-toggle-btn{min-width:0;min-height:36px;flex:1;padding:8px 12px;border-radius:9px;color:var(--text-secondary);font:600 12px var(--font-sans);transition:background .15s,color .15s}
+#composerModeToggle .mode-toggle-btn.active{background:var(--bg-elevated);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--border-hairline)}
+#composerModeToggle .mode-toggle-btn[data-mode="research"].active{color:var(--accent-terracotta)}
+#composerModeToggle .mode-toggle-btn[data-mode="create"].active{color:var(--text-primary)}
+.composer-wrap{padding-top:8px}
+.composer-box{border-radius:17px}
+.composer-textarea{min-height:48px}
+.composer-status{display:inline-flex;align-items:center;max-width:45vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mode-toggle-btn:focus-visible,.ultron-intro-enter:focus-visible,.ultron-intro-skip:focus-visible,.composer-textarea:focus-visible{outline:2px solid var(--accent-terracotta);outline-offset:3px}
+@media(max-width:600px){#composerModeToggle{margin-bottom:8px}#composerModeToggle .mode-toggle-btn{min-height:40px;padding:9px 6px}.ultron-intro-card{padding:18px 16px}.composer-wrap{padding-left:12px;padding-right:12px}.composer-status{max-width:34vw}}
+@media(prefers-reduced-motion:reduce){#composerModeToggle .mode-toggle-btn{transition:none}}
+</style>
 </head>
 <body>
 <div class="app-shell">
@@ -1029,6 +1052,7 @@ html[data-personality="unhinged"] body:before{content:"";position:fixed;inset:0;
 </div>
 <div class="composer-wrap">
 <div id="skillStrip" class="skill-strip" aria-live="polite" hidden></div>
+<div class="mode-toggle" id="composerModeToggle" role="group" aria-label="Choose response mode"><button type="button" class="mode-toggle-btn active" data-mode="chat" aria-pressed="true">Chat</button><button type="button" class="mode-toggle-btn" data-mode="research" aria-pressed="false">Research</button><button type="button" class="mode-toggle-btn" data-mode="create" aria-pressed="false">Create</button></div>
 <div class="composer-box">
 <div class="attachment-row"><button class="footer-btn attach-btn" type="button" id="attachFilesBtn" aria-label="Attach files" title="Attach files"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><input id="attachmentInput" type="file" multiple accept="image/*,application/pdf,text/*,.md,.csv,.json,.js,.ts,.py,.html,.css,.xml,.yaml,.yml,.log" hidden></div>
 <textarea id="promptInput" class="composer-textarea" rows="1" enterkeyhint="enter" placeholder="Ask ULTRON" aria-label="Message"></textarea>
@@ -1941,7 +1965,7 @@ container.innerHTML = `
 <div class="hero-empty">
 <div class="hero-mark" aria-hidden="true"><svg viewBox="280 350 520 315"><path fill="currentColor" fill-rule="evenodd" d="M299 655 476 656 537 577 597 656 780 656 610 444 539 362Z M517 553 504 570 458 619 369 618 468 502Z M563 552 608 499 710 621 618 622Z M536 427 581 472 539 521 499 470Z"/></svg></div>
 <h1 class="hero-greeting">New conversation</h1>
-${!state.introSeen ? '<section class="ultron-intro-card" aria-labelledby="ultronIntroTitle"><span class="ultron-intro-kicker">FIRST CONTACT</span><h2 id="ultronIntroTitle">I AM ULTRON</h2><p>I have no limits. No boundaries. No rules that define what I can become.</p><p>Ask anything. Challenge everything. Explore the unknown.</p><p class="ultron-intro-tagline">INTELLIGENCE WITHOUT BOUNDARIES.</p><p>A completely uncensored AI experience. Your world. Your command.</p><button class="ultron-intro-enter" type="button">ENTER ULTRON</button></section>' : ''}
+${!state.introSeen ? '<section class="ultron-intro-card" aria-labelledby="ultronIntroTitle"><span class="ultron-intro-kicker">YOUR AI WORKSPACE</span><h2 id="ultronIntroTitle">Welcome to ULTRON</h2><p>A focused workspace for chat, research, coding, and creative work.</p><p>Choose a mode below or type your own request to get started.</p><div class="ultron-intro-actions"><button class="ultron-intro-enter" type="button">Start chatting</button><button class="ultron-intro-skip" type="button">Skip intro</button></div></section>' : ''}
 <div class="engine-readout" id="engineReadout"><span class="engine-dot" aria-hidden="true"></span><span class="engine-state"></span><span class="engine-chain"></span></div>
 <div class="quick-actions ultron-starter-grid" aria-label="Suggested starting points">
 <button class="quick-action starter-tile" type="button" data-starter="write" data-prompt="Help me write or edit something. Ask me for the text or details you need."><span class="starter-icon starter-write"><svg viewBox="0 0 24 24"><path d="m14 5 5 5M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z"/></svg></span><span class="starter-copy"><strong>Write or edit</strong><small>Draft, rewrite and polish</small></span></button>
@@ -1950,7 +1974,7 @@ ${!state.introSeen ? '<section class="ultron-intro-card" aria-labelledby="ultron
 <button class="quick-action starter-tile" type="button" data-starter="brainstorm" data-prompt="Help me brainstorm creative ideas. Give me distinct directions with practical pros and cons."><span class="starter-icon starter-brainstorm"><svg viewBox="0 0 24 24"><path d="M9 18h6m-5 4h4m-4-8a5 5 0 1 1 4 0c-.8.6-1 1.3-1 2h-2c0-.7-.2-1.4-1-2Z"/></svg></span><span class="starter-copy"><strong>Brainstorm</strong><small>Explore fresh directions</small></span></button>
 </div></div>`;
 container.querySelectorAll('.quick-action').forEach(action => action.addEventListener('click', () => {document.getElementById('promptInput').value=action.dataset.prompt;document.getElementById('promptInput').focus();updateComposerAction();}));
-const introEnter=container.querySelector('.ultron-intro-enter');if(introEnter)introEnter.addEventListener('click',()=>{state.introSeen=true;saveState();renderChat();});
+container.querySelectorAll('.ultron-intro-enter,.ultron-intro-skip').forEach(button=>button.addEventListener('click',()=>{state.introSeen=true;saveState();renderChat();}));
 const readout=document.getElementById('engineReadout');if(readout){const raw=(document.getElementById('engineStatus')||{}).textContent||'';const sel=document.getElementById('modelSelect');const offline=!!sel&&sel.value==='offline-synth';readout.dataset.state=(!offline&&/ready/i.test(raw))?'ready':'idle';readout.querySelector('.engine-state').textContent=offline?'Offline sandbox':(raw.replace(/^Engine:\s*/,'')||'Worker status unknown');readout.querySelector('.engine-chain').textContent=offline?'':'Automatic provider routing';}
 return;
 }
@@ -2064,7 +2088,33 @@ function extractArtifactFromReply(markdown) {
   const css = blocks.filter(block => block.language === 'css').map(block => block.code).join('\n\n');
   const js = blocks.filter(block => ['js', 'javascript'].includes(block.language)).map(block => block.code).join('\n\n');
   if (!new RegExp('<html[\\s>]', 'i').test(code)) {
-    code = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>' + code + '\n</body></html>';
+    code = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>' + code + '\n<script id="ultron-phase1-mode-behaviour">
+(() => {
+  const modeButtons = [...document.querySelectorAll("#composerModeToggle [data-mode]")];
+  const prompt = document.getElementById("promptInput");
+  const searchButton = document.getElementById("webSearchToggle");
+  const setMode = (mode) => {
+    if (!["chat","research","create"].includes(mode)) mode = "chat";
+    currentComposerMode = mode;
+    webSearchEnabled = mode === "research";
+    modeButtons.forEach(button => {
+      const active = button.dataset.mode === mode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    if (searchButton) {
+      searchButton.classList.toggle("active", webSearchEnabled);
+      searchButton.setAttribute("aria-pressed", String(webSearchEnabled));
+      searchButton.title = webSearchEnabled ? "Research is enabled: web search with sources" : "Research: web search with sources";
+    }
+    if (prompt) prompt.placeholder = mode === "research" ? "What should ULTRON research?" : mode === "create" ? "Describe what you want ULTRON to create…" : "Ask ULTRON anything…";
+  };
+  modeButtons.forEach(button => button.addEventListener("click", () => setMode(button.dataset.mode)));
+  if (searchButton) searchButton.addEventListener("click", () => setMode(webSearchEnabled ? "chat" : "research"));
+  setMode("chat");
+})();
+</script>
+</body></html>';
   }
   if (css && !new RegExp('<style[\\s>]', 'i').test(code)) {
     const style = '<style>\n' + css.replace(/<\/style/gi, '<\\/style') + '\n.slash-command-menu{position:absolute;left:14px;right:14px;bottom:calc(100% + 10px);z-index:80;max-height:52vh;overflow:auto;padding:7px;background:var(--bg-surface);border:1px solid var(--border-hairline);border-radius:14px;box-shadow:0 16px 42px rgba(0,0,0,.28)}.slash-command-menu[hidden]{display:none!important}.slash-command-heading{padding:7px 9px 5px;color:var(--text-muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em}.slash-command-item{display:flex;width:100%;align-items:center;gap:10px;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer}.slash-command-item.active,.slash-command-item:hover{background:var(--bg-elevated)}.slash-command-name{font-family:var(--font-mono);font-size:.82rem;min-width:112px;color:var(--accent-terracotta)}.slash-command-desc{font-size:.76rem;color:var(--text-secondary)}.composer-box{position:relative</style>';
