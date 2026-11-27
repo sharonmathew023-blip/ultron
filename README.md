@@ -96,6 +96,7 @@ For GitHub Pages, configure the repository's Pages source to deploy from `main` 
 - Retry attempts are bounded across the provider chain.
 - Imported skills are untrusted and must pass validation.
 - Generated HTML runs in a sandboxed preview.
+- Owner-only page reading is restricted to exact `BROWSE_ALLOWED_HOSTS` entries; redirects must remain on listed hosts.
 - Worker logs contain operational metadata, not prompts, tokens, or account emails.
 
 ## Known limitations
