@@ -1,0 +1,47 @@
+{
+  "protocol": 1,
+  "mode": "manual",
+  "permissions": {
+    "allow": [
+      "file.read",
+      "file.glob",
+      "file.search",
+      "workspace.list",
+      "git.status",
+      "git.diff",
+      "test.detect",
+      "test.run"
+    ],
+    "ask": [
+      "file.edit",
+      "file.write",
+      "patch.apply",
+      "shell.run",
+      "lint.run",
+      "build.run"
+    ],
+    "deny": [
+      "file.read:.env",
+      "file.read:**/.env",
+      "file.read:**/.env.*",
+      "file.read:**/.ssh/**",
+      "file.read:**/*.pem",
+      "file.read:**/*.key",
+      "file.edit:**/.env*",
+      "file.delete:**/.env*",
+      "shell.run:rm *",
+      "shell.run:sudo *",
+      "shell.run:git push*",
+      "shell.run:npm publish*",
+      "shell.run:curl *",
+      "shell.run:wget *"
+    ]
+  },
+  "limits": {
+    "maxOutputBytes": 200000,
+    "maxReadBytes": 1000000,
+    "maxWriteBytes": 2000000,
+    "defaultTimeoutMs": 60000,
+    "maxTimeoutMs": 120000
+  }
+}

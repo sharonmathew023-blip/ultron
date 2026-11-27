@@ -38,3 +38,23 @@ jobs:
         run: node --test tests/device-registry.test.mjs
       - name: Run memory relevance tests
         run: node --test memory.test.mjs
+      - name: Run coding runtime protocol and policy tests
+        run: |
+          node --test tests/protocol.test.mjs
+          node --test tests/path-policy.test.mjs
+          node --test tests/command-policy.test.mjs
+      - name: Run coding runtime permission and approval tests
+        run: |
+          node --test tests/permission-engine.test.mjs
+          node --test tests/approval-store.test.mjs
+          node --test tests/workspace-policy.test.mjs
+      - name: Run coding runtime task and loop tests
+        run: |
+          node --test tests/task-events.test.mjs
+          node --test tests/context-manager.test.mjs
+          node --test tests/agent-loop.test.mjs
+      - name: Run coding runtime patch, command and daemon tests
+        run: |
+          node --test tests/patch-manager.test.mjs
+          node --test tests/command-runner.test.mjs
+          node --test tests/runtime-daemon.test.mjs
