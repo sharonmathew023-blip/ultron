@@ -13,6 +13,7 @@
 //   GROQ_API_KEY     optional backup provider, used when every Gemini model is busy
 //   GROQ_MODEL       model for that backup (default openai/gpt-oss-120b)
 //   GOOGLE_CLIENT_ID, ULTRON_OWNER_EMAIL, COMPOSIO_API_KEY  sign-in and owner-only routes
+//   BROWSE_ALLOWED_HOSTS comma-separated exact hostnames allowed by the owner-only page reader
 //
 // Routes:
 //   GET  /health            -> { ok, hasKey, hasGroqKey, cooldownStore, skillEngine }
@@ -81,6 +82,7 @@ export default {
       const auth = await authenticateGoogleRequest(request, env);
       if (!auth.identity) return fail(auth.status, auth.message);
       if (!isUltronOwner(auth.identity, env)) return fail(env.ULTRON_OWNER_EMAIL ? 403 : 503, env.ULTRON_OWNER_EMAIL ? "Sign in as owner to use app tools." : "Owner access is not configured. Add the ULTRON_OWNER_EMAIL Worker secret.");
+      if (!getBrowseAllowedHosts(env).size) return fail(503, "Website browsing is disabled. Configure BROWSE_ALLOWED_HOSTS with exact trusted hostnames in Worker settings.");
       try {
         let input = {};
         try {
@@ -92,7 +94,7 @@ export default {
         }
         let target;
         try { target = new URL(String(input.url || "")); } catch { return fail(400, "Enter a valid public website URL."); }
-        if (target.protocol !== "https:" || !isPublicWebHost(target.hostname)) return fail(400, "Only public HTTPS websites can be opened.");
+        if (!isAllowedBrowseUrl(target, env)) return fail(400, "Only HTTPS URLs on the configured browse allowlist can be opened.");
         let response;
         for (let hop = 0; hop < 4; hop++) {
           response = await fetch(target.toString(), {
@@ -104,7 +106,7 @@ export default {
           const location = response.headers.get("Location");
           if (!location) break;
           target = new URL(location, target);
-          if (target.protocol !== "https:" || !isPublicWebHost(target.hostname)) return fail(400, "The website redirected to a blocked address.");
+          if (!isAllowedBrowseUrl(target, env)) return fail(400, "The website redirected to a blocked or unapproved address.");
         }
         if (!response || !response.ok) return fail(response ? response.status : 502, "Could not open that website.");
         const type = response.headers.get("Content-Type") || "";
@@ -666,7 +668,7 @@ async function runComposioToolAgent(input, requestedModel, env, skillAccess, ctx
       try {
         if (name === "OPEN_PUBLIC_WEBPAGE") {
           if (!allowedTools.has("web.read")) throw new Error("web.read is not granted to the active skills.");
-          result = await readPublicPageForAgent(String(args.url || ""));
+          result = await readPublicPageForAgent(String(args.url || ""), env);
         } else {
           if (!safeMetaTools.has(name)) throw new Error("This Composio action is not enabled in ULTRON.");
           if (!mcp) throw new Error("Connect GitHub in Settings before using Composio tools.");
@@ -741,17 +743,18 @@ async function callGeminiJson(chain, body, apiKey, health) {
   }
   return { error: last };
 }
-async function readPublicPageForAgent(value) {
+async function readPublicPageForAgent(value, env) {
+  if (!getBrowseAllowedHosts(env).size) throw new Error("Website browsing is disabled until BROWSE_ALLOWED_HOSTS is configured.");
   let target;
   try { target = new URL(value); } catch { throw new Error("Enter a valid URL."); }
-  if (target.protocol !== "https:" || !isPublicWebHost(target.hostname)) throw new Error("Only public HTTPS websites can be opened.");
+  if (!isAllowedBrowseUrl(target, env)) throw new Error("Only HTTPS URLs on the configured browse allowlist can be opened.");
   let response;
   for (let hop=0; hop<4; hop++) {
-    response = await fetch(target.toString(), { redirect:"manual", headers:{"User-Agent":"OpenClaude-PageReader/1.0","Accept":"text/html,text/plain;q=0.9"}, signal:AbortSignal.timeout(12000) });
+    response = await fetch(target.toString(), { redirect:"manual", headers:{"User-Agent":"ULTRON-PageReader/1.0","Accept":"text/html,text/plain;q=0.9"}, signal:AbortSignal.timeout(12000) });
     if (![301,302,303,307,308].includes(response.status)) break;
     const location=response.headers.get("Location"); if(!location) break;
     target=new URL(location,target);
-    if(target.protocol!=="https:" || !isPublicWebHost(target.hostname)) throw new Error("The website redirected to a blocked address.");
+    if(!isAllowedBrowseUrl(target, env)) throw new Error("The website redirected to a blocked or unapproved address.");
   }
   if(!response || !response.ok) throw new Error("Could not open that website.");
   const type=response.headers.get("Content-Type") || "";
@@ -833,12 +836,29 @@ async function readStreamTextLimited(stream, maxBytes) {
   }
 }
 
+function normalizeBrowseHostname(hostname) {
+  return String(hostname || "").toLowerCase().replace(/^\\[|\\]$/g, "").replace(/\\.$/, "");
+}
+
 function isPublicWebHost(hostname) {
-  const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
-  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
-  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(":")) return false;
-  if (!host.includes(".") || !/^[a-z0-9.-]+$/.test(host)) return false;
+  const host = normalizeBrowseHostname(hostname);
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".test") || host.endsWith(".example") || host.endsWith(".invalid")) return false;
+  if (/^(\\d{1,3}\\.){3}\\d{1,3}$/.test(host) || host.includes(":")) return false;
+  const labels = host.split(".");
+  if (labels.length < 2 || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return false;
   return true;
+}
+
+function getBrowseAllowedHosts(env) {
+  const entries = String(env && env.BROWSE_ALLOWED_HOSTS || "").split(",").map(value => normalizeBrowseHostname(value.trim())).filter(Boolean);
+  return new Set(entries.filter(host => isPublicWebHost(host) && !host.includes("*")));
+}
+
+function isAllowedBrowseUrl(target, env) {
+  if (!target || target.protocol !== "https:" || target.username || target.password || (target.port && target.port !== "443")) return false;
+  const host = normalizeBrowseHostname(target.hostname);
+  if (!isPublicWebHost(host)) return false;
+  return getBrowseAllowedHosts(env).has(host);
 }
 
 function extractPageText(source, contentType) {
